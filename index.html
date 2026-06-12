@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#ff69b4">
+    <meta name="description" content="SFChat - 云崽智能对话界面">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="SFChat">
+    
+    <title>SFChat - 云崽对话</title>
+    
+    <!-- PWA配置 -->
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- 网站图标 -->
+    <link rel="icon" type="image/png" sizes="32x32" href="images/icon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="images/icon-16x16.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="images/icon-192x192.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="images/icon-180x180.png">
+    <link rel="shortcut icon" href="images/favicon.ico">
+    
+    <!-- 字体预加载（部署后生效） -->
+    <!-- <link rel="preload" href="fonts/LXGWWenKai-Regular-9375313a.ttf" as="font" type="font/ttf" crossorigin> -->
+    
+    <!-- 样式表 -->
+    <link rel="stylesheet" href="css/main.css">
+    
+    <!-- MathJax配置 -->
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['\\(', '\\)']],
+                displayMath: [['\\[', '\\]']],
+                processEscapes: true,
+                processEnvironments: true,
+                tags: 'ams'
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+                ignoreHtmlClass: 'no-mathjax',
+                processHtmlClass: 'math-block|math-inline'
+            },
+            svg: { 
+                fontCache: 'global',
+                scale: 1.1
+            },
+            startup: { 
+                typeset: false,
+                ready: () => {
+                    MathJax.startup.defaultReady();
+                }
+            }
+        };
+    </script>
+    <!-- 本地加载MathJax -->
+    <script src="js/mathjax/tex-mml-chtml.js" async></script>
+</head>
+<body>
+    <!-- 聊天容器 -->
+    <div class="chat-container" id="chat-container">
+        <!-- 欢迎消息 -->
+        <div class="message left">
+            <div class="avatar" style="background: linear-gradient(135deg, #ffb6c1, #ff69b4);"></div>
+            <div class="message-content">
+                <div class="markdown-content">
+                    <p>👋 你好呀！我是云崽助手~</p>
+                    <p>请先在右下角 <strong>设置</strong> 中配置服务器连接信息，然后就可以开始对话啦！</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 输入区域 -->
+    <div class="input-container">
+        <div class="input-wrapper">
+            <div class="image-preview-container" id="image-preview-container"></div>
+            
+            <!-- 设置按钮 -->
+            <button class="action-button" id="settings-button" title="设置">
+                <svg viewBox="0 0 24 24">
+                    <path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/>
+                </svg>
+            </button>
+            
+            
+            <!-- 输入框 -->
+            <textarea id="message-input" placeholder="输入消息..." rows="1"></textarea>
+            
+            <!-- 发送按钮 -->
+            <button id="send-button" aria-label="发送"></button>
+        </div>
+    </div>
+
+    <!-- 遮罩层 -->
+    <div class="modal-overlay" id="modal-overlay"></div>
+    
+    <!-- 设置面板 -->
+    <div id="settings-modal">
+        <button class="close-button" id="close-settings">×</button>
+        <h3>设置</h3>
+        <div class="settings-content">
+            <!-- 菜单标签 -->
+            <div class="settings-menu">
+                <button class="menu-item active" data-tab="connection">连接</button>
+                <button class="menu-item" data-tab="tools">工具</button>
+                <button class="menu-item" data-tab="about">关于</button>
+            </div>
+            
+            <!-- 连接设置 -->
+            <div class="settings-tab active" id="connection-tab">
+                <div class="settings-item">
+                    <label for="ws-ip">服务器地址</label>
+                    <input type="text" id="ws-ip" placeholder="输入IP地址或域名">
+                </div>
+                <div class="settings-item">
+                    <label for="ws-port">端口号 <span style="color: var(--text-light); font-size: 0.85em;">(默认8081)</span></label>
+                    <input type="number" id="ws-port" placeholder="留空使用默认端口" min="1" max="65535">
+                </div>
+                <div class="settings-item">
+                    <label for="user-qq">用户QQ</label>
+                    <input type="text" id="user-qq" placeholder="输入您的QQ号">
+                </div>
+                <div class="settings-item">
+                    <label for="bot-qq">机器人QQ</label>
+                    <input type="text" id="bot-qq" placeholder="输入机器人QQ号">
+                </div>
+                <div class="settings-item">
+                    <label for="ws-password">访问密码</label>
+                    <input type="password" id="ws-password" placeholder="输入访问密码">
+                </div>
+                <button id="ws-connect" class="settings-button">🔗 连接服务器</button>
+                <div id="ws-status" class="settings-status">未连接</div>
+            </div>
+            
+            <!-- 工具 -->
+            <div class="settings-tab" id="tools-tab">
+                <div class="tools-buttons">
+                    <button class="tool-button" id="upload-button">
+                        <svg viewBox="0 0 24 24"><path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>
+                        <span>上传图片</span>
+                    </button>
+                    <button class="tool-button" id="clear-button">
+                        <svg viewBox="0 0 24 24"><path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/></svg>
+                        <span>清空页面</span>
+                    </button>
+                </div>
+                <div class="avatar-toggle-container">
+                    <span>显示头像</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="avatar-toggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- 关于 -->
+            <div class="settings-tab" id="about-tab">
+                <div class="about-content">
+                    <h4>SFChat</h4>
+                    <p>基于云崽(Yunzai-Bot)的智能对话前端界面</p>
+                    
+                    <h5>✨ 功能特点</h5>
+                    <ul>
+                        <li>支持文本对话与图片识别</li>
+                        <li>Markdown格式渲染</li>
+                        <li>LaTeX数学公式支持</li>
+                        <li>代码高亮与一键复制</li>
+                        <li>HTML/SVG实时预览</li>
+                        <li>私聊模式（纯文字对话）</li>
+                    </ul>
+                    
+                    <h5>📖 使用说明</h5>
+                    <ol>
+                        <li>配置服务器地址和端口</li>
+                        <li>填写QQ号用于获取头像</li>
+                        <li>输入访问密码并连接</li>
+                        <li>连接后即可开始聊天</li>
+                    </ol>
+                    
+                    <p style="margin-top: 20px; text-align: center; color: var(--text-light);">
+                        Made with 💖 by SFChat Team
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 消息提示 -->
+    <div class="message-toast" id="message-toast"></div>
+    
+    <!-- 确认对话框 -->
+    <div class="confirm-dialog" id="confirm-dialog">
+        <div class="message"></div>
+        <div class="buttons">
+            <button class="cancel-btn">取消</button>
+            <button class="confirm-btn">确定</button>
+        </div>
+    </div>
+
+    <!-- 脚本加载 -->
+    <script src="js/marked.min.js"></script>
+    <script src="js/highlight.min.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
