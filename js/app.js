@@ -1446,6 +1446,14 @@ const EventBinder = {
             DOM.modalOverlay?.classList.remove('active');
         });
         
+        // Close settings when clicking outside the panel
+        DOM.settingsModal?.addEventListener('click', (e) => {
+            if (e.target === DOM.settingsModal) {
+                DOM.settingsModal.classList.remove('active');
+                DOM.modalOverlay?.classList.remove('active');
+            }
+        });
+        
         // 连接按钮
         document.getElementById('ws-connect')?.addEventListener('click', () => {
             const ip = document.getElementById('ws-ip')?.value.trim();
@@ -1530,36 +1538,43 @@ const EventBinder = {
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         if (!isMobile) return;
         
-        let windowHeight = window.innerHeight;
-        
-        const detectKeyboard = () => {
-            if (window.innerHeight < windowHeight * 0.8) {
-                document.body.classList.add('keyboard-open');
-                document.body.classList.remove('keyboard-closed');
-            } else {
-                document.body.classList.remove('keyboard-open');
-                document.body.classList.add('keyboard-closed');
-            }
-        };
-        
-        window.addEventListener('load', () => {
-            windowHeight = window.innerHeight;
-            document.body.classList.add('keyboard-closed');
-        });
-        
-        DOM.messageInput?.addEventListener('focus', () => {
-            setTimeout(() => {
-                DOM.messageInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                detectKeyboard();
-            }, 300);
-        });
-        
-        window.addEventListener('resize', () => {
-            detectKeyboard();
-            if (document.activeElement === DOM.messageInput) {
-                setTimeout(() => DOM.messageInput.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
-            }
-        });
+        const inputContainer = document.querySelector('.input-container');
+        if (!inputContainer) return;
+
+        // Use visualViewport API for precise keyboard tracking
+        if (window.visualViewport) {
+            const updateInputPosition = () => {
+                const vv = window.visualViewport;
+                // Calculate keyboard height: difference between layout viewport and visual viewport
+                const keyboardHeight = window.innerHeight - vv.height - vv.offsetTop;
+                
+                if (keyboardHeight > 50) {
+                    // Keyboard is open - position input above it
+                    inputContainer.style.setProperty('--keyboard-offset', keyboardHeight + 'px');
+                } else {
+                    // Keyboard is closed
+                    inputContainer.style.setProperty('--keyboard-offset', '12px');
+                }
+            };
+
+            window.visualViewport.addEventListener('resize', updateInputPosition);
+            window.visualViewport.addEventListener('scroll', updateInputPosition);
+        } else {
+            // Fallback for browsers without visualViewport
+            let initialHeight = window.innerHeight;
+            
+            window.addEventListener('resize', () => {
+                const currentHeight = window.innerHeight;
+                const keyboardHeight = initialHeight - currentHeight;
+                
+                if (keyboardHeight > 50) {
+                    inputContainer.style.setProperty('--keyboard-offset', keyboardHeight + 'px');
+                } else {
+                    inputContainer.style.setProperty('--keyboard-offset', '12px');
+                    initialHeight = currentHeight;
+                }
+            });
+        }
     }
 };
 

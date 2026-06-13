@@ -1063,29 +1063,44 @@ body::before {
 
 #settings-modal {
     position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%) scale(0.9);
-    width: 90%;
-    max-width: 480px;
-    max-height: 85vh;
-    background: var(--bg-white);
-    border-radius: var(--radius-xl);
-    padding: 0;
-    box-shadow: var(--shadow-lg);
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     z-index: 1001;
     opacity: 0;
     visibility: hidden;
     transition: var(--transition-normal);
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
+    pointer-events: none;
 }
 
 #settings-modal.active {
-    transform: translate(-50%, -50%) scale(1);
     opacity: 1;
     visibility: visible;
+    pointer-events: auto;
+}
+
+#settings-modal > .settings-panel {
+    width: 90%;
+    max-width: 480px;
+    max-height: 85vh;
+    max-height: 85dvh;
+    background: var(--bg-white);
+    border-radius: var(--radius-xl);
+    padding: 0;
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transform: scale(0.9);
+    transition: var(--transition-normal);
+}
+
+#settings-modal.active > .settings-panel {
+    transform: scale(1);
 }
 
 #settings-modal h3 {
@@ -1637,9 +1652,10 @@ input:checked + .toggle-slider::before {
         line-height: 1.8;
     }
     
-    #settings-modal {
+    .settings-panel {
         width: 95%;
         max-height: 80vh;
+        max-height: 80dvh;
     }
     
     .settings-menu {
@@ -1739,20 +1755,12 @@ input:checked + .toggle-slider::before {
 /* ========== 移动端键盘适配 ========== */
 @media screen and (max-width: 768px) {
     .input-container {
-        position: sticky;
-        bottom: 12px;
-        margin: 0 auto;
-        transform: none;
-        left: 0;
-        z-index: 999;
-    }
-    
-    body.keyboard-open .input-container {
         position: fixed;
-    }
-    
-    body.keyboard-closed .input-container {
-        position: sticky;
+        bottom: var(--keyboard-offset, 12px);
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 999;
+        transition: bottom 0.15s ease-out;
     }
 }
 
