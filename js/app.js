@@ -1499,7 +1499,8 @@ const EventBinder = {
             });
         });
         
-        // 移动端适配 — 交由浏览器原生处理（interactive-widget=resizes-content + 100dvh）
+        // 移动端适配 — visualViewport.resize 直接偏移输入框底部
+        this.initMobileSupport();
     },
 
     // 处理发送
@@ -1532,6 +1533,20 @@ const EventBinder = {
             ImageManager.clearPreviews();
             MessageManager.showTypingIndicator();
         }
+    },
+
+    // 移动端支持 — visualViewport.resize 直接偏移输入框底部
+    initMobileSupport() {
+        const input = document.querySelector('.input-container');
+        if (!input || !window.visualViewport) return;
+
+        const update = () => {
+            const kh = Math.max(0, window.innerHeight - window.visualViewport.height);
+            input.style.bottom = kh > 60 ? (kh + 8) + 'px' : '0px';
+        };
+
+        window.visualViewport.addEventListener('resize', update);
+        update();
     },
 };
 

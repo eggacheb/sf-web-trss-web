@@ -1769,25 +1769,25 @@ input:checked + .toggle-slider::before {
     }
 
     .chat-container {
-        display: flex;
-        flex-direction: column;
         height: 100%;
         margin: 0;
         border-radius: 0;
-        padding: 0;
+        padding: 0 0 72px; /* 底部留空给 fixed 输入框 */
     }
 
     .messages-area {
-        flex: 1;
-        min-height: 0;
+        height: 100%;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
-        padding: 16px 16px 8px;
+        padding: 16px;
     }
 
     .input-container {
-        flex-shrink: 0;
-        width: 100%;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 999;
         padding: 0 8px max(8px, env(safe-area-inset-bottom, 8px));
     }
     
