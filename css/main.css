@@ -77,6 +77,10 @@
     --spacing-md: 16px;
     --spacing-lg: 24px;
     --spacing-xl: 32px;
+
+    /* 移动端键盘布局 */
+    --keyboard-inset: 0px;
+    --input-reserve: 72px;
 }
 
 /* ========== 基础重置 ========== */
@@ -101,7 +105,8 @@ body {
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     font-weight: 500;
-    /* vh → dvh: 在 Android Chrome PWA 下随键盘动态调整，浏览器原生处理，不需要 JS */
+    /* vh fallback + dvh: dvh 支持时跟随动态视口，旧浏览器退回 vh */
+    height: 100vh;
     height: 100dvh;
     overflow: hidden;
     color: var(--text-primary);
@@ -152,6 +157,7 @@ body::before {
     width: 100%;
     max-width: 900px;
     height: calc(100vh - 48px);
+    height: calc(100dvh - 48px);
     margin: 0 auto;
     position: relative;
     z-index: 1;
@@ -1598,6 +1604,7 @@ input:checked + .toggle-slider::before {
     
     .chat-container {
         height: calc(100vh - 24px);
+        height: calc(100dvh - 24px);
         padding: 16px 16px 0;
         border-radius: var(--radius-lg);
     }
@@ -1712,6 +1719,7 @@ input:checked + .toggle-slider::before {
     
     .chat-container {
         height: calc(100vh - 16px);
+        height: calc(100dvh - 16px);
         padding: 12px 12px 85px;
     }
     
@@ -1766,29 +1774,37 @@ input:checked + .toggle-slider::before {
         overflow: hidden;
         padding: 0;
         height: 100vh;
+        height: 100dvh;
     }
 
     .chat-container {
         height: 100%;
         margin: 0;
         border-radius: 0;
-        padding: 0 0 72px; /* 底部留空给 fixed 输入框 */
+        padding: 0 0 calc(var(--input-reserve, 72px) + var(--keyboard-inset, 0px));
+        transition: none;
     }
 
     .messages-area {
         height: 100%;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
         padding: 16px;
     }
 
     .input-container {
         position: fixed;
-        bottom: 0;
+        bottom: var(--keyboard-inset, 0px);
         left: 0;
         right: 0;
+        width: auto;
+        max-width: none;
         z-index: 999;
         padding: 0 8px max(8px, env(safe-area-inset-bottom, 8px));
+        transform: none;
+        transition: none;
+        will-change: bottom;
     }
     
     .input-wrapper {

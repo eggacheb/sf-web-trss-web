@@ -997,6 +997,24 @@ const MarkdownRenderer = {
 
 // ========== 消息管理 ==========
 const MessageManager = {
+    // 只滚动消息容器，避免 scrollIntoView 牵动移动端 visual viewport
+    scrollMessageIntoView(element, block = 'center') {
+        const container = DOM.messagesArea;
+        if (!container || !element) return;
+
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        const relativeTop = elementRect.top - containerRect.top + container.scrollTop;
+        const centerTop = relativeTop - ((container.clientHeight - elementRect.height) / 2);
+        const endTop = relativeTop - container.clientHeight + elementRect.height + 16;
+        const targetTop = block === 'end' ? endTop : centerTop;
+
+        container.scrollTo({
+            top: Math.max(0, targetTop),
+            behavior: 'smooth'
+        });
+    },
+
     // 添加消息
     async addMessage(content, position, shouldSave = true, options = {}) {
         if (!content || typeof content !== 'string') {
@@ -1055,9 +1073,9 @@ const MessageManager = {
         // 滚动处理
         if (position === 'right') {
             AppState.lastUserMessageElement = messageDiv;
-            setTimeout(() => messageDiv.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+            setTimeout(() => this.scrollMessageIntoView(messageDiv), 100);
         } else if (position === 'left' && AppState.lastUserMessageElement) {
-            setTimeout(() => AppState.lastUserMessageElement.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+            setTimeout(() => this.scrollMessageIntoView(AppState.lastUserMessageElement), 100);
         }
         
         // 渲染数学公式
@@ -1097,7 +1115,7 @@ const MessageManager = {
         typingDiv.appendChild(messageContent);
         DOM.messagesArea.appendChild(typingDiv);
         
-        setTimeout(() => typingDiv.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+        setTimeout(() => this.scrollMessageIntoView(typingDiv, 'end'), 100);
     },
 
     // 移除等待指示器
@@ -1499,7 +1517,7 @@ const EventBinder = {
             });
         });
         
-        // 移动端适配 — visualViewport.resize 直接偏移输入框底部
+        // 移动端适配 — 用 visual viewport 的遮挡量统一驱动输入框和消息区
         this.initMobileSupport();
     },
 
@@ -1535,18 +1553,76 @@ const EventBinder = {
         }
     },
 
-    // 移动端支持 — visualViewport.resize 直接偏移输入框底部
+    // 移动端支持 — 输入框锚定 visual viewport，页面高度不再由 JS 接管
     initMobileSupport() {
         const input = document.querySelector('.input-container');
-        if (!input || !window.visualViewport) return;
+        if (!input) return;
 
-        const update = () => {
-            const kh = Math.max(0, window.innerHeight - window.visualViewport.height);
-            input.style.bottom = kh > 60 ? (kh + 8) + 'px' : '0px';
+        const root = document.documentElement;
+        const KEYBOARD_THRESHOLD = 60;
+        let pendingFrame = 0;
+        let fallbackViewportHeight = window.innerHeight || 0;
+
+        const setPxVar = (name, value) => {
+            root.style.setProperty(name, Math.max(0, Math.round(value)) + 'px');
         };
 
-        window.visualViewport.addEventListener('resize', update);
-        update();
+        const getLayoutViewportHeight = () => Math.max(
+            document.documentElement.clientHeight || 0,
+            window.innerHeight || 0
+        );
+
+        const getKeyboardInset = () => {
+            if (window.visualViewport) {
+                const viewport = window.visualViewport;
+                const layoutHeight = getLayoutViewportHeight();
+                const visualBottom = viewport.offsetTop + viewport.height;
+                const inset = Math.max(0, layoutHeight - visualBottom);
+                return inset > KEYBOARD_THRESHOLD ? inset : 0;
+            }
+
+            const currentHeight = window.innerHeight || 0;
+            const inset = Math.max(0, fallbackViewportHeight - currentHeight);
+            if (inset > KEYBOARD_THRESHOLD) return inset;
+
+            fallbackViewportHeight = Math.max(fallbackViewportHeight, currentHeight);
+            return 0;
+        };
+
+        const update = () => {
+            pendingFrame = 0;
+            const inputHeight = input.getBoundingClientRect().height || 72;
+            setPxVar('--input-reserve', inputHeight);
+            setPxVar('--keyboard-inset', getKeyboardInset());
+        };
+
+        const scheduleUpdate = () => {
+            if (pendingFrame) return;
+            pendingFrame = requestAnimationFrame(update);
+        };
+
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', scheduleUpdate);
+            window.visualViewport.addEventListener('scroll', scheduleUpdate, { passive: true });
+        }
+
+        window.addEventListener('resize', scheduleUpdate);
+        window.addEventListener('orientationchange', () => setTimeout(scheduleUpdate, 250));
+
+        DOM.messageInput?.addEventListener('focus', () => {
+            scheduleUpdate();
+            [80, 250, 600].forEach(delay => setTimeout(scheduleUpdate, delay));
+        });
+        DOM.messageInput?.addEventListener('blur', () => setTimeout(scheduleUpdate, 120));
+        DOM.messageInput?.addEventListener('input', scheduleUpdate);
+
+        if (window.ResizeObserver) {
+            this.mobileInputObserver?.disconnect();
+            this.mobileInputObserver = new ResizeObserver(scheduleUpdate);
+            this.mobileInputObserver.observe(input);
+        }
+
+        scheduleUpdate();
     },
 };
 
