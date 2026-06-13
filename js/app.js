@@ -1535,37 +1535,19 @@ const EventBinder = {
         }
     },
 
-    // 移动端支持 — 通过 visualViewport 控制 body 高度，flex 布局自然定位输入框
+    // 移动端支持 — visualViewport.resize 控制 body 高度，flex 自然定位
     initMobileSupport() {
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         if (!isMobile) return;
 
-        const setBodyHeight = (value) => {
-            document.body.style.height = value;
-            window.scrollTo(0, 0);
-        };
-        const VISIBLE = '100vh';
-
-        // visualViewport 变化 → body 高度等于可视区域高度
+        // visualViewport.resize → 键盘弹起/收起 → body 高度 = 可见区域高度
+        // flex 布局自然把输入框放在可见区域底部 = 键盘上方
         if (window.visualViewport) {
             const update = () => {
-                setBodyHeight(window.visualViewport.height + 'px');
+                document.body.style.height = window.visualViewport.height + 'px';
             };
             window.visualViewport.addEventListener('resize', update);
-            window.visualViewport.addEventListener('scroll', update, { passive: true });
             update();
-        }
-
-        // focus 兜底: visualViewport 事件没触发时主动检测
-        const messageInput = document.getElementById('message-input');
-        if (messageInput) {
-            messageInput.addEventListener('focus', () => {
-                setTimeout(() => {
-                    if (window.visualViewport) {
-                        setBodyHeight(window.visualViewport.height + 'px');
-                    }
-                }, 300);
-            });
         }
     }
 };
