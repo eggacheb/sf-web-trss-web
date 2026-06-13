@@ -1533,100 +1533,74 @@ const EventBinder = {
         }
     },
 
-    // 移动端支持
+    // 移动端支持 — 直接用 bottom 跟随键盘高度
     initMobileSupport() {
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         if (!isMobile) return;
 
-        const root = document.documentElement;
         const inputContainer = document.querySelector('.input-container');
         const messageInput = document.getElementById('message-input');
         if (!inputContainer) return;
 
-        root.style.setProperty('--keyboard-offset', '0px');
-
+        inputContainer.style.bottom = '0px';
         const EXTRA_PADDING = 12;
-
-        const updateOffset = (offsetPx) => {
-            root.style.setProperty('--keyboard-offset', `-${Math.max(0, offsetPx)}px`);
-            window.scrollTo(0, 0);
-        };
+        let lastKnownKeyboardHeight = 0;
 
         const getKeyboardHeight = () => {
             if (!window.visualViewport) return 0;
             return Math.max(0, window.innerHeight - window.visualViewport.height - (window.visualViewport.offsetTop || 0));
         };
 
-        // L1: VirtualKeyboard API (Chrome / WebView2)
-        if ('virtualKeyboard' in navigator) {
-            try {
-                navigator.virtualKeyboard.overlaysContent = true;
-                navigator.virtualKeyboard.addEventListener('geometrychange', () => {
-                    updateOffset(navigator.virtualKeyboard.boundingRect.height);
-                });
-            } catch (_) {}
-        }
+        const applyOffset = (kh) => {
+            lastKnownKeyboardHeight = kh > 50 ? kh : 0;
+            const bottom = Math.max(0, kh + EXTRA_PADDING);
+            inputContainer.style.bottom = bottom + 'px';
+            window.scrollTo(0, 0);
+        };
 
-        // L2: visualViewport 事件
-        // 在 Android Chrome 上 interactive-widget=resizes-content 已让 layout viewport 缩小，
-        // 此时 innerHeight == visualViewport.height，getKeyboardHeight() 返回 0，offset 不生效。
-        // 在 iOS 上 resizes-content 不被支持，fallback 到 resizes-visual，
-        // 此时 innerHeight > visualViewport.height，getKeyboardHeight() 返回键盘高度，offset 生效。
+        // visualViewport 监听 — 键盘开/关自动检测
         if (window.visualViewport) {
             let pending = false;
-            const onViewportChange = () => {
+            const handler = () => {
                 if (pending) return;
                 pending = true;
                 requestAnimationFrame(() => {
                     pending = false;
-                    updateOffset(getKeyboardHeight());
+                    applyOffset(getKeyboardHeight());
                 });
             };
-            window.visualViewport.addEventListener('resize', onViewportChange);
-            window.visualViewport.addEventListener('scroll', onViewportChange, { passive: true });
-            onViewportChange();
+            window.visualViewport.addEventListener('resize', handler);
+            window.visualViewport.addEventListener('scroll', handler, { passive: true });
+            handler();
         }
 
-        // iOS pre-lift: mousedown 时预抬升，绕过 iOS Safari 的预检机制
+        // iOS pre-lift: mousedown 预抬升
         if (messageInput && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
             messageInput.addEventListener('mousedown', () => {
-                const kh = getKeyboardHeight();
-                if (kh > 50) updateOffset(kh + EXTRA_PADDING);
+                if (lastKnownKeyboardHeight > 50) {
+                    inputContainer.style.bottom = (lastKnownKeyboardHeight + EXTRA_PADDING) + 'px';
+                }
             });
         }
 
-        // L3: focus 兜底 — visualViewport 事件未触发时用窗口高度检测键盘
+        // focus 兜底: 键盘动画期间多次检查 + 估算
         if (messageInput) {
-            let innerHeightBeforeKeyboard = window.innerHeight;
-
-            const onFocusCheckKeyboard = () => {
+            messageInput.addEventListener('focus', () => {
+                [200, 500, 1000].forEach(delay => {
+                    setTimeout(() => {
+                        const kh = getKeyboardHeight();
+                        if (kh > 60) applyOffset(kh + EXTRA_PADDING);
+                    }, delay);
+                });
                 setTimeout(() => {
-                    const kh = getKeyboardHeight();
-                    if (kh > 60) {
-                        updateOffset(kh + EXTRA_PADDING);
-                        return;
+                    if (getKeyboardHeight() <= 60) {
+                        const estimated = Math.min(
+                            Math.round(window.innerHeight * 0.35),
+                            window.innerHeight - 180
+                        );
+                        applyOffset(Math.max(estimated, 200));
                     }
-                    // getKeyboardHeight 为 0 但 innerHeight 缩小了 → resizes-content 已生效
-                    if (window.innerHeight < innerHeightBeforeKeyboard - 60) {
-                        updateOffset(0);
-                        return;
-                    }
-                    // 都读不到 → 按比例估算
-                    const estimated = Math.min(
-                        Math.round(window.innerHeight * 0.35),
-                        window.innerHeight - 180
-                    );
-                    updateOffset(Math.max(estimated, 200));
-                }, 300);
-            };
-
-            messageInput.addEventListener('focus', onFocusCheckKeyboard);
-
-            window.addEventListener('resize', () => {
-                const diff = innerHeightBeforeKeyboard - window.innerHeight;
-                if (Math.abs(diff) > 60) {
-                    innerHeightBeforeKeyboard = window.innerHeight;
-                }
+                }, 1200);
             });
         }
     }
