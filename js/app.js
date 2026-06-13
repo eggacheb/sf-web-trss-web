@@ -181,7 +181,7 @@ const MediaCache = {
     },
 
     buildLookupKey(scope, role, normalizedContent) {
-        return `${scope}|${role}|${this.hashString(normalizedContent)}`;
+        return `${scope}|${role}|${this.hashString(this.canonicalizeLookupContent(normalizedContent))}`;
     },
 
     buildOutgoingHistoryContent(content, imageCount = 0) {
@@ -190,6 +190,55 @@ const MediaCache = {
         if (text) parts.push(text);
         for (let i = 0; i < imageCount; i++) parts.push('[图片]');
         return parts.join(' ') || '[图片]';
+    },
+
+    canonicalizeLookupContent(content) {
+        const text = String(content || '')
+            .replace(/【\s*(图片|语音)\s*】/g, '[$1]')
+            .replace(/\[\s*(图片|语音)\s*\]/g, '[$1]')
+            .replace(/\s+/g, ' ')
+            .replace(/\s*(\[(?:图片|语音)\])\s*/g, ' $1 ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return text || '[消息]';
+    },
+
+    getPlaceholderTypes(content) {
+        return [...String(content || '').matchAll(/\[(图片|语音)\]/g)]
+            .map(([, label]) => label === '语音' ? 'audio' : 'image');
+    },
+
+    getMediaSignatureFromTypes(types) {
+        return Array.isArray(types) ? types.join('|') : '';
+    },
+
+    getMediaSignatureFromRefs(mediaRefs) {
+        return this.getMediaSignatureFromTypes((mediaRefs || []).map(ref => ref.type));
+    },
+
+    getTextFingerprint(content) {
+        return this.canonicalizeLookupContent(content)
+            .replace(/\[(?:图片|语音)\]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    },
+
+    isSameMediaSequence(mediaRefs, placeholderTypes) {
+        if (!Array.isArray(mediaRefs) || mediaRefs.length !== placeholderTypes.length) return false;
+        return mediaRefs.every((ref, index) => ref.type === placeholderTypes[index]);
+    },
+
+    isCompatibleHistoryEntry(record, historyEntry) {
+        if (!record?.mediaRefs?.length || record.role !== historyEntry.role) return false;
+        if (!this.isSameMediaSequence(record.mediaRefs, historyEntry.placeholderTypes)) return false;
+
+        const recordText = this.getTextFingerprint(record.normalizedContent);
+        return recordText === historyEntry.textFingerprint || !recordText || !historyEntry.textFingerprint;
+    },
+
+    shouldRetainCachedMessage(record, historyEntries) {
+        if (historyEntries.some(entry => entry.lookupKey === record.lookupKey)) return true;
+        return historyEntries.some(entry => this.isCompatibleHistoryEntry(record, entry));
     },
 
     extractSrc(html) {
@@ -278,7 +327,7 @@ const MediaCache = {
 
             const scope = this.getScope();
             const now = Date.now();
-            const normalizedContent = options.historyContent || extracted.normalizedContent;
+            const normalizedContent = this.normalizeMessageContent(options.historyContent || extracted.normalizedContent).normalizedContent;
             const lookupKey = this.buildLookupKey(scope, role, normalizedContent);
             const mediaRecords = [];
             const mediaRefs = extracted.mediaItems.map((item, index) => {
@@ -306,6 +355,8 @@ const MediaCache = {
                 role,
                 normalizedContent,
                 lookupKey,
+                lookupContent: this.canonicalizeLookupContent(normalizedContent),
+                mediaSignature: this.getMediaSignatureFromRefs(mediaRefs),
                 mediaRefs,
                 createdAt: now,
                 lastUsedAt: now
@@ -378,18 +429,37 @@ const MediaCache = {
         });
     },
 
+    pickRestoreCandidate(records, normalizedContent, role, allowCompatible = false) {
+        const usedIds = this.restoreBatchUsedIds;
+        const placeholderTypes = this.getPlaceholderTypes(normalizedContent);
+        const historyEntry = {
+            role,
+            placeholderTypes,
+            textFingerprint: this.getTextFingerprint(normalizedContent)
+        };
+
+        return (records || [])
+            .filter(record => record?.role === role && record.mediaRefs?.length)
+            .filter(record => !usedIds || !usedIds.has(record.id))
+            .filter(record => !allowCompatible || this.isCompatibleHistoryEntry(record, historyEntry))
+            .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
+    },
+
     async restoreMessageMedia(content, role) {
         try {
             const { normalizedContent } = this.normalizeMessageContent(content);
             const scope = this.getScope();
             const lookupKey = this.buildLookupKey(scope, role, normalizedContent);
             const candidates = await this.getAllByIndex(this.MESSAGE_STORE, 'byLookupKey', lookupKey);
-            const usedIds = this.restoreBatchUsedIds;
-            const messageRecord = candidates
-                .sort((a, b) => a.createdAt - b.createdAt)
-                .find(record => !usedIds || !usedIds.has(record.id));
+            let messageRecord = this.pickRestoreCandidate(candidates, normalizedContent, role);
+
+            if (!messageRecord) {
+                const scopedCandidates = await this.getAllByIndex(this.MESSAGE_STORE, 'byScope', scope);
+                messageRecord = this.pickRestoreCandidate(scopedCandidates, normalizedContent, role, true);
+            }
 
             if (!messageRecord?.mediaRefs?.length) return content;
+            const usedIds = this.restoreBatchUsedIds;
             if (usedIds) usedIds.add(messageRecord.id);
 
             const mediaRecords = await this.getMediaRecords(messageRecord.mediaRefs.map(ref => ref.mediaId));
@@ -432,20 +502,27 @@ const MediaCache = {
     async syncWithHistory(messages) {
         try {
             const scope = this.getScope();
-            const retainedLookupKeys = new Set();
+            const historyEntries = [];
 
             if (Array.isArray(messages)) {
                 messages.forEach(msg => {
                     if (!msg || typeof msg.content !== 'string') return;
                     const role = msg.role === 'user' ? 'user' : 'bot';
                     const { normalizedContent } = this.normalizeMessageContent(msg.content);
-                    retainedLookupKeys.add(this.buildLookupKey(scope, role, normalizedContent));
+                    const placeholderTypes = this.getPlaceholderTypes(normalizedContent);
+                    historyEntries.push({
+                        role,
+                        lookupKey: this.buildLookupKey(scope, role, normalizedContent),
+                        placeholderTypes,
+                        mediaSignature: this.getMediaSignatureFromTypes(placeholderTypes),
+                        textFingerprint: this.getTextFingerprint(normalizedContent)
+                    });
                 });
             }
 
             const cachedMessages = await this.getAllByIndex(this.MESSAGE_STORE, 'byScope', scope);
             const staleMessageIds = cachedMessages
-                .filter(record => !retainedLookupKeys.has(record.lookupKey))
+                .filter(record => !this.shouldRetainCachedMessage(record, historyEntries))
                 .map(record => record.id);
 
             await this.deleteRecords(this.MESSAGE_STORE, staleMessageIds);
@@ -928,7 +1005,7 @@ const MessageManager = {
         const role = MediaCache.getRole(position);
         let renderContent = content;
         if (shouldSave) {
-            MediaCache.cacheMessageMedia(content, role, options);
+            await MediaCache.cacheMessageMedia(content, role, options);
         } else {
             renderContent = await MediaCache.restoreMessageMedia(content, role);
         }
@@ -1417,7 +1494,7 @@ const EventBinder = {
     },
 
     // 处理发送
-    handleSend() {
+    async handleSend() {
         const message = DOM.messageInput?.value.trim() || '';
         const images = ImageManager.getAllImages();
         
@@ -1432,14 +1509,14 @@ const EventBinder = {
         }
         
         // 显示用户消息
-        MessageManager.addMessage(displayContent, 'right', true, {
+        await MessageManager.addMessage(displayContent, 'right', true, {
             historyContent: MediaCache.buildOutgoingHistoryContent(message, images.length)
         });
         
         // 发送到服务器
         if (WebSocketManager.send(message, images)) {
             if (message === MediaCache.CLEAR_HISTORY_COMMAND) {
-                MediaCache.clearCurrentScope();
+                await MediaCache.clearCurrentScope();
             }
             DOM.messageInput.value = '';
             Utils.autoResizeInput(DOM.messageInput);
