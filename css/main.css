@@ -1830,7 +1830,9 @@ input:checked + .toggle-slider::before {
         width: 100%;
         max-width: none;
         z-index: 2;
-        background: var(--bg-white);
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
         padding: 0 8px max(8px, env(safe-area-inset-bottom, 8px));
         transform: none;
         transition: none;
