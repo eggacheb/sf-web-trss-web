@@ -1540,11 +1540,18 @@ const EventBinder = {
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         if (!isMobile) return;
 
-        // visualViewport.resize → 键盘弹起/收起 → body 高度 = 可见区域高度
-        // flex 布局自然把输入框放在可见区域底部 = 键盘上方
         if (window.visualViewport) {
             const update = () => {
-                document.body.style.height = window.visualViewport.height + 'px';
+                const vvH = window.visualViewport.height;
+                const iH = window.innerHeight;
+                const keyboardHeight = iH - vvH;
+
+                if (keyboardHeight > 60) {
+                    document.body.style.height = vvH + 'px';
+                    window.scrollTo(0, 0);
+                } else {
+                    document.body.style.height = '';
+                }
             };
             window.visualViewport.addEventListener('resize', update);
             update();
