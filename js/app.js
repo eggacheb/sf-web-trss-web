@@ -1548,8 +1548,7 @@ const EventBinder = {
         const EXTRA_PADDING = 12;
 
         const updateOffset = (offsetPx) => {
-            const clamped = Math.max(0, offsetPx);
-            root.style.setProperty('--keyboard-offset', `-${clamped}px`);
+            root.style.setProperty('--keyboard-offset', `-${Math.max(0, offsetPx)}px`);
             window.scrollTo(0, 0);
         };
 
@@ -1568,7 +1567,7 @@ const EventBinder = {
             } catch (_) {}
         }
 
-        // L2: visualViewport API (iOS Safari, Android Chrome)
+        // L2: visualViewport API (全平台，自然处理键盘开和关)
         if (window.visualViewport) {
             let pending = false;
             const onViewportChange = () => {
@@ -1581,6 +1580,7 @@ const EventBinder = {
             };
             window.visualViewport.addEventListener('resize', onViewportChange);
             window.visualViewport.addEventListener('scroll', onViewportChange, { passive: true });
+            // 初始化
             onViewportChange();
         }
 
@@ -1592,37 +1592,34 @@ const EventBinder = {
             });
         }
 
-        // L3: focus/blur 兜底（UWP WebView / 边缘情况）
+        // L3: focus 轮询兜底（部分 WebView visualViewport.resize 不触发）
         if (messageInput) {
             messageInput.addEventListener('focus', () => {
-                let attempts = 0;
-                const checkKeyboard = () => {
-                    const kh = getKeyboardHeight();
-                    if (kh > 50) {
-                        updateOffset(kh + EXTRA_PADDING);
-                        return;
-                    }
-                    if (attempts < 4) {
-                        attempts++;
-                        setTimeout(checkKeyboard, 250);
-                    } else {
-                        // 彻底无法获取键盘高度时，按视口高度估算
+                // 在键盘动画期间多次检查
+                [200, 500, 1000].forEach(delay => {
+                    setTimeout(() => {
+                        const kh = getKeyboardHeight();
+                        if (kh > 60) updateOffset(kh + EXTRA_PADDING);
+                    }, delay);
+                });
+                // 如果彻底读不到 visualViewport 高度变化，按视口估算
+                setTimeout(() => {
+                    if (getKeyboardHeight() <= 60) {
                         const estimated = Math.min(
                             Math.round(window.innerHeight * 0.35),
                             window.innerHeight - 180
                         );
                         updateOffset(Math.max(estimated, 200));
                     }
-                };
-                setTimeout(checkKeyboard, 200);
+                }, 1200);
             });
-
-            messageInput.addEventListener('blur', () => {
-                setTimeout(() => updateOffset(0), 200);
-            });
+            // 注意：╳ 没有 blur 重置偏移 ╳
+            // 偏移只随 visualViewport 变化而更新。
+            // 输入框失焦不代表键盘关闭——用户可能在选中文字复制，
+            // 此时重置偏移会导致输入框被键盘盖住。
         }
 
-        // window.resize 兜底（部分 WebView 键盘弹出时触发 resize）
+        // window.resize 兜底（部分 WebView 键盘弹出时触发 window.resize）
         let lastInnerHeight = window.innerHeight;
         window.addEventListener('resize', () => {
             const diff = lastInnerHeight - window.innerHeight;
