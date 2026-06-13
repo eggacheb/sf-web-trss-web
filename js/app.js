@@ -22,6 +22,7 @@ const DOM = {
     settingsModal: null,
     modalOverlay: null,
     imagePreviewContainer: null,
+    messagesArea: null,
     init() {
         this.chatContainer = document.querySelector('.chat-container');
         this.messageInput = document.getElementById('message-input');
@@ -30,6 +31,7 @@ const DOM = {
         this.settingsModal = document.getElementById('settings-modal');
         this.modalOverlay = document.getElementById('modal-overlay');
         this.imagePreviewContainer = document.getElementById('image-preview-container');
+        this.messagesArea = document.getElementById('messages-area');
     }
 };
 
@@ -1048,7 +1050,7 @@ const MessageManager = {
         messageContent.appendChild(markdownContent);
         messageDiv.appendChild(avatar);
         messageDiv.appendChild(messageContent);
-        DOM.chatContainer.appendChild(messageDiv);
+        DOM.messagesArea.appendChild(messageDiv);
 
         // 滚动处理
         if (position === 'right') {
@@ -1093,7 +1095,7 @@ const MessageManager = {
         messageContent.appendChild(typingAnimation);
         typingDiv.appendChild(avatar);
         typingDiv.appendChild(messageContent);
-        DOM.chatContainer.appendChild(typingDiv);
+        DOM.messagesArea.appendChild(typingDiv);
         
         setTimeout(() => typingDiv.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
     },
@@ -1106,7 +1108,7 @@ const MessageManager = {
 
     // 清空消息
     clearMessages() {
-        DOM.chatContainer.innerHTML = '';
+        DOM.messagesArea.innerHTML = '';
     }
 };
 
@@ -1533,74 +1535,36 @@ const EventBinder = {
         }
     },
 
-    // 移动端支持 — 直接用 bottom 跟随键盘高度
+    // 移动端支持 — 通过 visualViewport 控制 body 高度，flex 布局自然定位输入框
     initMobileSupport() {
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         if (!isMobile) return;
 
-        const inputContainer = document.querySelector('.input-container');
-        const messageInput = document.getElementById('message-input');
-        if (!inputContainer) return;
-
-        inputContainer.style.bottom = '0px';
-        const EXTRA_PADDING = 12;
-        let lastKnownKeyboardHeight = 0;
-
-        const getKeyboardHeight = () => {
-            if (!window.visualViewport) return 0;
-            return Math.max(0, window.innerHeight - window.visualViewport.height - (window.visualViewport.offsetTop || 0));
-        };
-
-        const applyOffset = (kh) => {
-            lastKnownKeyboardHeight = kh > 50 ? kh : 0;
-            const bottom = Math.max(0, kh + EXTRA_PADDING);
-            inputContainer.style.bottom = bottom + 'px';
+        const setBodyHeight = (value) => {
+            document.body.style.height = value;
             window.scrollTo(0, 0);
         };
+        const VISIBLE = '100vh';
 
-        // visualViewport 监听 — 键盘开/关自动检测
+        // visualViewport 变化 → body 高度等于可视区域高度
         if (window.visualViewport) {
-            let pending = false;
-            const handler = () => {
-                if (pending) return;
-                pending = true;
-                requestAnimationFrame(() => {
-                    pending = false;
-                    applyOffset(getKeyboardHeight());
-                });
+            const update = () => {
+                setBodyHeight(window.visualViewport.height + 'px');
             };
-            window.visualViewport.addEventListener('resize', handler);
-            window.visualViewport.addEventListener('scroll', handler, { passive: true });
-            handler();
+            window.visualViewport.addEventListener('resize', update);
+            window.visualViewport.addEventListener('scroll', update, { passive: true });
+            update();
         }
 
-        // iOS pre-lift: mousedown 预抬升
-        if (messageInput && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-            messageInput.addEventListener('mousedown', () => {
-                if (lastKnownKeyboardHeight > 50) {
-                    inputContainer.style.bottom = (lastKnownKeyboardHeight + EXTRA_PADDING) + 'px';
-                }
-            });
-        }
-
-        // focus 兜底: 键盘动画期间多次检查 + 估算
+        // focus 兜底: visualViewport 事件没触发时主动检测
+        const messageInput = document.getElementById('message-input');
         if (messageInput) {
             messageInput.addEventListener('focus', () => {
-                [200, 500, 1000].forEach(delay => {
-                    setTimeout(() => {
-                        const kh = getKeyboardHeight();
-                        if (kh > 60) applyOffset(kh + EXTRA_PADDING);
-                    }, delay);
-                });
                 setTimeout(() => {
-                    if (getKeyboardHeight() <= 60) {
-                        const estimated = Math.min(
-                            Math.round(window.innerHeight * 0.35),
-                            window.innerHeight - 180
-                        );
-                        applyOffset(Math.max(estimated, 200));
+                    if (window.visualViewport) {
+                        setBodyHeight(window.visualViewport.height + 'px');
                     }
-                }, 1200);
+                }, 300);
             });
         }
     }

@@ -146,6 +146,8 @@ body::before {
 
 /* ========== 聊天容器 ========== */
 .chat-container {
+    display: flex;
+    flex-direction: column;
     width: 100%;
     max-width: 900px;
     height: calc(100vh - 48px);
@@ -155,12 +157,8 @@ body::before {
     background: rgba(255, 255, 255, 0.85);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    padding: var(--spacing-lg) var(--spacing-xl) 100px;
+    padding: var(--spacing-lg) var(--spacing-xl) 0;
     box-shadow: var(--shadow-lg), inset 0 0 60px rgba(255, 182, 193, 0.1);
-    word-wrap: break-word;
-    overflow-wrap: break-word;
-    overflow-y: auto;
-    overflow-x: hidden;
     border-radius: var(--radius-xl);
     border: 1px solid rgba(255, 182, 193, 0.3);
 }
@@ -182,17 +180,23 @@ body::before {
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
 
+/* 消息区域 */
+.messages-area {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    padding-bottom: var(--spacing-md);
+}
+
 
 /* ========== 输入区域 ========== */
 .input-container {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: calc(100% - 48px);
-    max-width: 900px;
-    z-index: 100;
-    transition: var(--transition-normal);
+    flex-shrink: 0;
+    width: 100%;
+    padding-bottom: var(--spacing-lg);
 }
 
 .input-wrapper {
@@ -1593,13 +1597,16 @@ input:checked + .toggle-slider::before {
     
     .chat-container {
         height: calc(100vh - 24px);
-        padding: 16px 16px 90px;
+        padding: 16px 16px 0;
         border-radius: var(--radius-lg);
     }
     
+    .messages-area {
+        padding: 0 0 8px;
+    }
+    
     .input-container {
-        bottom: 16px;
-        width: calc(100% - 24px);
+        padding-bottom: 16px;
     }
     
     .input-wrapper {
@@ -1752,7 +1759,7 @@ input:checked + .toggle-slider::before {
     }
 }
 
-/* ========== 移动端键盘适配 ========== */
+/* ========== 移动端全屏键盘适配 ========== */
 @media screen and (max-width: 768px) {
     body {
         overflow: hidden;
@@ -1761,26 +1768,26 @@ input:checked + .toggle-slider::before {
     }
 
     .chat-container {
+        display: flex;
+        flex-direction: column;
         height: 100%;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
         margin: 0;
         border-radius: 0;
-        padding-bottom: 80px;
+        padding: 0;
+    }
+
+    .messages-area {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: 16px 16px 8px;
     }
 
     .input-container {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
+        flex-shrink: 0;
         width: 100%;
-        max-width: none;
-        transform: none;
-        padding: 8px 12px;
-        padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
-        z-index: 999;
-        transition: none;
+        padding: 0 8px max(8px, env(safe-area-inset-bottom, 8px));
     }
     
     .input-wrapper {
