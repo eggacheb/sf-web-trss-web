@@ -1535,7 +1535,22 @@ const EventBinder = {
 
     // 移动端支持
     initMobileSupport() {
-        // 使用纯 CSS flex 布局处理移动端键盘，不再依赖 JS
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if (!isMobile) return;
+
+        // 使用 visualViewport API 锁定 body 高度，完美解决安卓和 iOS 的键盘弹出问题
+        if (window.visualViewport) {
+            const updateViewportHeight = () => {
+                document.body.style.height = window.visualViewport.height + 'px';
+                window.scrollTo(0, 0);
+            };
+            
+            window.visualViewport.addEventListener('resize', updateViewportHeight);
+            window.visualViewport.addEventListener('scroll', updateViewportHeight);
+            
+            // 初始化调用一次
+            updateViewportHeight();
+        }
     }
 };
 
