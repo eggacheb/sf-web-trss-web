@@ -2,7 +2,9 @@
   "name": "SiliconFlow Chat",
   "short_name": "SFChat",
   "description": "一个基于云崽的智能对话应用",
-  "start_url": "/",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#ffe6f0",
   "theme_color": "#ffe6f0",
@@ -14,10 +16,16 @@
       "purpose": "any maskable"
     },
     {
+      "src": "images/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
       "src": "images/icon-1500x1500.png", 
       "sizes": "1500x1500",
       "type": "image/png",
       "purpose": "any maskable"
     }
   ]
-} 
+}
