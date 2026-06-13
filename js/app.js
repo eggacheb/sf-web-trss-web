@@ -94,6 +94,386 @@ const Utils = {
     }
 };
 
+// ========== 媒体缓存管理 ==========
+const MediaCache = {
+    DB_NAME: 'sf_chat_media_cache',
+    DB_VERSION: 1,
+    MEDIA_STORE: 'media',
+    MESSAGE_STORE: 'messages',
+    CLEAR_HISTORY_COMMAND: '#web清空记录',
+    dbPromise: null,
+    disabled: false,
+    restoreBatchUsedIds: null,
+
+    openDb() {
+        if (this.disabled || !window.indexedDB) return Promise.resolve(null);
+        if (this.dbPromise) return this.dbPromise;
+
+        this.dbPromise = new Promise((resolve) => {
+            const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
+
+            request.onupgradeneeded = () => {
+                const db = request.result;
+
+                if (!db.objectStoreNames.contains(this.MEDIA_STORE)) {
+                    const mediaStore = db.createObjectStore(this.MEDIA_STORE, { keyPath: 'id' });
+                    mediaStore.createIndex('byScope', 'scope', { unique: false });
+                }
+
+                if (!db.objectStoreNames.contains(this.MESSAGE_STORE)) {
+                    const messageStore = db.createObjectStore(this.MESSAGE_STORE, { keyPath: 'id' });
+                    messageStore.createIndex('byScope', 'scope', { unique: false });
+                    messageStore.createIndex('byLookupKey', 'lookupKey', { unique: false });
+                }
+            };
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => {
+                console.warn('媒体缓存不可用:', request.error);
+                this.disabled = true;
+                this.dbPromise = null;
+                resolve(null);
+            };
+        });
+
+        return this.dbPromise;
+    },
+
+    requestToPromise(request) {
+        return new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    },
+
+    transactionDone(transaction) {
+        return new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error);
+        });
+    },
+
+    getScope() {
+        const ip = this.normalizeScopePart(document.getElementById('ws-ip')?.value, 'default_host');
+        const port = this.normalizeScopePart(document.getElementById('ws-port')?.value, '8081');
+        const userQQ = this.normalizeScopePart(document.getElementById('user-qq')?.value, 'web_user');
+        return `${ip}:${port}:${userQQ}`;
+    },
+
+    normalizeScopePart(value, fallback) {
+        const text = typeof value === 'string' ? value.trim() : '';
+        return (text || fallback).replace(/[^\w.-]/g, '_').slice(0, 96);
+    },
+
+    getRole(position) {
+        return position === 'right' ? 'user' : 'bot';
+    },
+
+    hashString(value) {
+        const text = String(value);
+        let hash = 2166136261;
+        for (let i = 0; i < text.length; i++) {
+            hash ^= text.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return `${text.length.toString(36)}-${(hash >>> 0).toString(36)}`;
+    },
+
+    buildLookupKey(scope, role, normalizedContent) {
+        return `${scope}|${role}|${this.hashString(normalizedContent)}`;
+    },
+
+    buildOutgoingHistoryContent(content, imageCount = 0) {
+        const parts = [];
+        const text = typeof content === 'string' ? content.trim() : '';
+        if (text) parts.push(text);
+        for (let i = 0; i < imageCount; i++) parts.push('[图片]');
+        return parts.join(' ') || '[图片]';
+    },
+
+    extractSrc(html) {
+        const match = String(html).match(/\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
+        return match ? (match[1] || match[2] || match[3] || '') : '';
+    },
+
+    parseDataUrl(dataUrl) {
+        const match = String(dataUrl).match(/^data:([^;,]+)[^,]*,/i);
+        if (!match) return null;
+        const mime = match[1].toLowerCase();
+        const type = mime.startsWith('image/') ? 'image' : mime.startsWith('audio/') ? 'audio' : '';
+        if (!type) return null;
+        return { mime, type };
+    },
+
+    normalizeMessageContent(content) {
+        const raw = String(content || '');
+        const mediaItems = [];
+        let hasImage = false;
+        let hasAudio = false;
+
+        let normalized = raw.replace(/<audio\b[\s\S]*?<\/audio>|<audio\b[^>]*>|<img\b[^>]*>|!\[([^\]]*)\]\(([^)]+)\)/gi, (match, alt, markdownUrl) => {
+            if (match.startsWith('![')) {
+                hasImage = true;
+                const media = this.parseDataUrl(markdownUrl);
+                if (media?.type === 'image') {
+                    mediaItems.push({ type: 'image', mime: media.mime, dataUrl: markdownUrl, alt: alt || '图片' });
+                }
+                return ' [图片] ';
+            }
+
+            if (/^<audio\b/i.test(match)) {
+                hasAudio = true;
+                const src = this.extractSrc(match);
+                const media = this.parseDataUrl(src);
+                if (media?.type === 'audio') {
+                    mediaItems.push({ type: 'audio', mime: media.mime, dataUrl: src });
+                }
+                return ' [语音] ';
+            }
+
+            hasImage = true;
+            const src = this.extractSrc(match);
+            const media = this.parseDataUrl(src);
+            if (media?.type === 'image') {
+                mediaItems.push({ type: 'image', mime: media.mime, dataUrl: src, alt: '图片' });
+            }
+            return ' [图片] ';
+        });
+
+        normalized = normalized
+            .replace(/<[^>]+>/g, '')
+            .replace(/[ \t]+/g, ' ')
+            .replace(/[ \t]*\n[ \t]*/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+
+        if (!normalized) {
+            if (hasImage) normalized = '[图片]';
+            else if (hasAudio) normalized = '[语音]';
+            else normalized = '[消息]';
+        }
+
+        return { normalizedContent: normalized, mediaItems };
+    },
+
+    async putRecords(mediaRecords, messageRecord) {
+        const db = await this.openDb();
+        if (!db) return;
+
+        const transaction = db.transaction([this.MEDIA_STORE, this.MESSAGE_STORE], 'readwrite');
+        const mediaStore = transaction.objectStore(this.MEDIA_STORE);
+        const messageStore = transaction.objectStore(this.MESSAGE_STORE);
+
+        mediaRecords.forEach(record => mediaStore.put(record));
+        messageStore.put(messageRecord);
+
+        await this.transactionDone(transaction);
+    },
+
+    async cacheMessageMedia(content, role, options = {}) {
+        try {
+            const extracted = this.normalizeMessageContent(content);
+            if (extracted.mediaItems.length === 0) return;
+
+            const scope = this.getScope();
+            const now = Date.now();
+            const normalizedContent = options.historyContent || extracted.normalizedContent;
+            const lookupKey = this.buildLookupKey(scope, role, normalizedContent);
+            const mediaRecords = [];
+            const mediaRefs = extracted.mediaItems.map((item, index) => {
+                const mediaId = `${scope}|${item.type}|${this.hashString(item.dataUrl)}`;
+                mediaRecords.push({
+                    id: mediaId,
+                    scope,
+                    type: item.type,
+                    mime: item.mime,
+                    dataUrl: item.dataUrl,
+                    size: item.dataUrl.length,
+                    createdAt: now,
+                    lastUsedAt: now
+                });
+                return {
+                    type: item.type,
+                    mediaId,
+                    alt: item.alt || (item.type === 'image' ? `图片${index + 1}` : '语音')
+                };
+            });
+
+            const messageRecord = {
+                id: `${lookupKey}|${now}|${Math.random().toString(36).slice(2, 8)}`,
+                scope,
+                role,
+                normalizedContent,
+                lookupKey,
+                mediaRefs,
+                createdAt: now,
+                lastUsedAt: now
+            };
+
+            await this.putRecords(mediaRecords, messageRecord);
+        } catch (error) {
+            console.warn('缓存媒体失败:', error);
+        }
+    },
+
+    beginRestoreBatch() {
+        this.restoreBatchUsedIds = new Set();
+    },
+
+    endRestoreBatch() {
+        this.restoreBatchUsedIds = null;
+    },
+
+    async getAllByIndex(storeName, indexName, key) {
+        const db = await this.openDb();
+        if (!db) return [];
+
+        const transaction = db.transaction(storeName, 'readonly');
+        const index = transaction.objectStore(storeName).index(indexName);
+        const records = await this.requestToPromise(index.getAll(key));
+        await this.transactionDone(transaction);
+        return records || [];
+    },
+
+    async getMediaRecords(mediaIds) {
+        const db = await this.openDb();
+        if (!db) return new Map();
+
+        const transaction = db.transaction(this.MEDIA_STORE, 'readonly');
+        const store = transaction.objectStore(this.MEDIA_STORE);
+        const pairs = await Promise.all(mediaIds.map(async id => [id, await this.requestToPromise(store.get(id))]));
+        await this.transactionDone(transaction);
+        return new Map(pairs.filter(([, record]) => record));
+    },
+
+    buildMediaMarkup(ref, mediaRecord) {
+        if (!mediaRecord?.dataUrl) return null;
+        if (ref.type === 'audio') {
+            return `<audio controls src="${this.escapeHtmlAttribute(mediaRecord.dataUrl)}"></audio>`;
+        }
+        return `![${ref.alt || '图片'}](${mediaRecord.dataUrl})`;
+    },
+
+    escapeHtmlAttribute(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    },
+
+    injectMedia(normalizedContent, mediaRefs, mediaRecords) {
+        let cursor = 0;
+        return normalizedContent.replace(/\[(图片|语音)\]/g, (placeholder, label) => {
+            const expectedType = label === '语音' ? 'audio' : 'image';
+            while (cursor < mediaRefs.length) {
+                const ref = mediaRefs[cursor++];
+                if (ref.type !== expectedType) continue;
+
+                const markup = this.buildMediaMarkup(ref, mediaRecords.get(ref.mediaId));
+                return markup || placeholder;
+            }
+            return placeholder;
+        });
+    },
+
+    async restoreMessageMedia(content, role) {
+        try {
+            const { normalizedContent } = this.normalizeMessageContent(content);
+            const scope = this.getScope();
+            const lookupKey = this.buildLookupKey(scope, role, normalizedContent);
+            const candidates = await this.getAllByIndex(this.MESSAGE_STORE, 'byLookupKey', lookupKey);
+            const usedIds = this.restoreBatchUsedIds;
+            const messageRecord = candidates
+                .sort((a, b) => a.createdAt - b.createdAt)
+                .find(record => !usedIds || !usedIds.has(record.id));
+
+            if (!messageRecord?.mediaRefs?.length) return content;
+            if (usedIds) usedIds.add(messageRecord.id);
+
+            const mediaRecords = await this.getMediaRecords(messageRecord.mediaRefs.map(ref => ref.mediaId));
+            if (mediaRecords.size === 0) return content;
+            return this.injectMedia(normalizedContent, messageRecord.mediaRefs, mediaRecords);
+        } catch (error) {
+            console.warn('恢复媒体缓存失败:', error);
+            return content;
+        }
+    },
+
+    async deleteRecords(storeName, ids) {
+        if (ids.length === 0) return;
+        const db = await this.openDb();
+        if (!db) return;
+
+        const transaction = db.transaction(storeName, 'readwrite');
+        const store = transaction.objectStore(storeName);
+        ids.forEach(id => store.delete(id));
+        await this.transactionDone(transaction);
+    },
+
+    async clearCurrentScope() {
+        try {
+            const scope = this.getScope();
+            const [messages, media] = await Promise.all([
+                this.getAllByIndex(this.MESSAGE_STORE, 'byScope', scope),
+                this.getAllByIndex(this.MEDIA_STORE, 'byScope', scope)
+            ]);
+
+            await Promise.all([
+                this.deleteRecords(this.MESSAGE_STORE, messages.map(record => record.id)),
+                this.deleteRecords(this.MEDIA_STORE, media.map(record => record.id))
+            ]);
+        } catch (error) {
+            console.warn('清空媒体缓存失败:', error);
+        }
+    },
+
+    async syncWithHistory(messages) {
+        try {
+            const scope = this.getScope();
+            const retainedLookupKeys = new Set();
+
+            if (Array.isArray(messages)) {
+                messages.forEach(msg => {
+                    if (!msg || typeof msg.content !== 'string') return;
+                    const role = msg.role === 'user' ? 'user' : 'bot';
+                    const { normalizedContent } = this.normalizeMessageContent(msg.content);
+                    retainedLookupKeys.add(this.buildLookupKey(scope, role, normalizedContent));
+                });
+            }
+
+            const cachedMessages = await this.getAllByIndex(this.MESSAGE_STORE, 'byScope', scope);
+            const staleMessageIds = cachedMessages
+                .filter(record => !retainedLookupKeys.has(record.lookupKey))
+                .map(record => record.id);
+
+            await this.deleteRecords(this.MESSAGE_STORE, staleMessageIds);
+            await this.deleteOrphanMedia(scope);
+        } catch (error) {
+            console.warn('同步媒体缓存失败:', error);
+        }
+    },
+
+    async deleteOrphanMedia(scope) {
+        const [messages, media] = await Promise.all([
+            this.getAllByIndex(this.MESSAGE_STORE, 'byScope', scope),
+            this.getAllByIndex(this.MEDIA_STORE, 'byScope', scope)
+        ]);
+
+        const usedMediaIds = new Set();
+        messages.forEach(message => {
+            (message.mediaRefs || []).forEach(ref => usedMediaIds.add(ref.mediaId));
+        });
+
+        const staleMediaIds = media
+            .filter(record => !usedMediaIds.has(record.id))
+            .map(record => record.id);
+
+        await this.deleteRecords(this.MEDIA_STORE, staleMediaIds);
+    }
+};
+
 // ========== Markdown渲染器 ==========
 const MarkdownRenderer = {
     // LaTeX占位符存储
@@ -539,10 +919,18 @@ const MarkdownRenderer = {
 // ========== 消息管理 ==========
 const MessageManager = {
     // 添加消息
-    addMessage(content, position, shouldSave = true) {
+    async addMessage(content, position, shouldSave = true, options = {}) {
         if (!content || typeof content !== 'string') {
             console.error('Invalid message content:', content);
             return;
+        }
+
+        const role = MediaCache.getRole(position);
+        let renderContent = content;
+        if (shouldSave) {
+            MediaCache.cacheMessageMedia(content, role, options);
+        } else {
+            renderContent = await MediaCache.restoreMessageMedia(content, role);
         }
 
         const messageDiv = document.createElement('div');
@@ -571,13 +959,13 @@ const MessageManager = {
         markdownContent.className = 'markdown-content';
         
         try {
-            markdownContent.innerHTML = MarkdownRenderer.render(content);
+            markdownContent.innerHTML = MarkdownRenderer.render(renderContent);
             MarkdownRenderer.processCodeBlocks(markdownContent);
             MarkdownRenderer.processPreviewBlocks(markdownContent);
             MarkdownRenderer.bindMathCopyEvents(markdownContent);
         } catch (error) {
             console.error('Markdown parsing error:', error);
-            markdownContent.textContent = content;
+            markdownContent.textContent = renderContent;
         }
         
         messageContent.appendChild(markdownContent);
@@ -727,7 +1115,7 @@ const WebSocketManager = {
     },
 
     // 处理消息
-    handleMessage(event) {
+    async handleMessage(event) {
         try {
             const msgObj = JSON.parse(event.data);
             
@@ -754,15 +1142,22 @@ const WebSocketManager = {
                 MessageManager.removeTypingIndicator();
             } else if (msgObj.type === 'history') {
                 MessageManager.clearMessages();
+                await MediaCache.syncWithHistory(msgObj.messages);
                 if (Array.isArray(msgObj.messages)) {
-                    msgObj.messages.forEach(msg => {
-                        if (msg && msg.content) {
-                            MessageManager.addMessage(msg.content, msg.role === 'user' ? 'right' : 'left', false);
+                    MediaCache.beginRestoreBatch();
+                    try {
+                        for (const msg of msgObj.messages) {
+                            if (msg && msg.content) {
+                                await MessageManager.addMessage(msg.content, msg.role === 'user' ? 'right' : 'left', false);
+                            }
                         }
-                    });
+                    } finally {
+                        MediaCache.endRestoreBatch();
+                    }
                 }
                 MessageManager.removeTypingIndicator();
             } else if (msgObj.type === 'historyCleared') {
+                await MediaCache.clearCurrentScope();
                 MessageManager.clearMessages();
                 Utils.showToast('历史记录已清空');
             } else if (msgObj.type === 'typing') {
@@ -773,7 +1168,7 @@ const WebSocketManager = {
                 }
             } else if (typeof msgObj.content === 'string' && msgObj.content.trim()) {
                 MessageManager.removeTypingIndicator();
-                MessageManager.addMessage(msgObj.content.trim(), 'left', true);
+                await MessageManager.addMessage(msgObj.content.trim(), 'left', true);
             }
         } catch (error) {
             console.error('[sf插件] 处理消息错误:', error);
@@ -988,6 +1383,7 @@ const EventBinder = {
         document.getElementById('clear-button')?.addEventListener('click', async () => {
             if (await Utils.showConfirm('确定要清空当前页面吗？')) {
                 const userQQ = document.getElementById('user-qq')?.value.trim() || 'web_user';
+                await MediaCache.clearCurrentScope();
                 if (AppState.wsConnected && AppState.wsAuthenticated) {
                     AppState.wsConnection.send(JSON.stringify({ type: 'clearHistory', userQQ }));
                     Utils.showToast('正在清空历史记录...');
@@ -1036,10 +1432,15 @@ const EventBinder = {
         }
         
         // 显示用户消息
-        MessageManager.addMessage(displayContent, 'right', true);
+        MessageManager.addMessage(displayContent, 'right', true, {
+            historyContent: MediaCache.buildOutgoingHistoryContent(message, images.length)
+        });
         
         // 发送到服务器
         if (WebSocketManager.send(message, images)) {
+            if (message === MediaCache.CLEAR_HISTORY_COMMAND) {
+                MediaCache.clearCurrentScope();
+            }
             DOM.messageInput.value = '';
             Utils.autoResizeInput(DOM.messageInput);
             ImageManager.clearPreviews();
