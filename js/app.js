@@ -1533,24 +1533,104 @@ const EventBinder = {
         }
     },
 
-    // 移动端支持
+    // 移动端支持 — 三层渐进增强
     initMobileSupport() {
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         if (!isMobile) return;
 
-        // 使用 visualViewport API 锁定 body 高度，完美解决安卓和 iOS 的键盘弹出问题
-        if (window.visualViewport) {
-            const updateViewportHeight = () => {
-                document.body.style.height = window.visualViewport.height + 'px';
-                window.scrollTo(0, 0);
-            };
-            
-            window.visualViewport.addEventListener('resize', updateViewportHeight);
-            window.visualViewport.addEventListener('scroll', updateViewportHeight);
-            
-            // 初始化调用一次
-            updateViewportHeight();
+        const root = document.documentElement;
+        const inputContainer = document.querySelector('.input-container');
+        const messageInput = document.getElementById('message-input');
+        if (!inputContainer) return;
+
+        root.style.setProperty('--keyboard-offset', '0px');
+
+        const EXTRA_PADDING = 12;
+
+        const updateOffset = (offsetPx) => {
+            const clamped = Math.max(0, offsetPx);
+            root.style.setProperty('--keyboard-offset', `-${clamped}px`);
+            window.scrollTo(0, 0);
+        };
+
+        const getKeyboardHeight = () => {
+            if (!window.visualViewport) return 0;
+            return Math.max(0, window.innerHeight - window.visualViewport.height - (window.visualViewport.offsetTop || 0));
+        };
+
+        // L1: VirtualKeyboard API (Chrome / WebView2)
+        if ('virtualKeyboard' in navigator) {
+            try {
+                navigator.virtualKeyboard.overlaysContent = true;
+                navigator.virtualKeyboard.addEventListener('geometrychange', () => {
+                    updateOffset(navigator.virtualKeyboard.boundingRect.height);
+                });
+            } catch (_) {}
         }
+
+        // L2: visualViewport API (iOS Safari, Android Chrome)
+        if (window.visualViewport) {
+            let pending = false;
+            const onViewportChange = () => {
+                if (pending) return;
+                pending = true;
+                requestAnimationFrame(() => {
+                    pending = false;
+                    updateOffset(getKeyboardHeight());
+                });
+            };
+            window.visualViewport.addEventListener('resize', onViewportChange);
+            window.visualViewport.addEventListener('scroll', onViewportChange, { passive: true });
+            onViewportChange();
+        }
+
+        // iOS pre-lift: mousedown 时预抬升，绕过 iOS Safari 的预检机制
+        if (messageInput && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+            messageInput.addEventListener('mousedown', () => {
+                const kh = getKeyboardHeight();
+                if (kh > 50) updateOffset(kh + EXTRA_PADDING);
+            });
+        }
+
+        // L3: focus/blur 兜底（UWP WebView / 边缘情况）
+        if (messageInput) {
+            messageInput.addEventListener('focus', () => {
+                let attempts = 0;
+                const checkKeyboard = () => {
+                    const kh = getKeyboardHeight();
+                    if (kh > 50) {
+                        updateOffset(kh + EXTRA_PADDING);
+                        return;
+                    }
+                    if (attempts < 4) {
+                        attempts++;
+                        setTimeout(checkKeyboard, 250);
+                    } else {
+                        // 彻底无法获取键盘高度时，按视口高度估算
+                        const estimated = Math.min(
+                            Math.round(window.innerHeight * 0.35),
+                            window.innerHeight - 180
+                        );
+                        updateOffset(Math.max(estimated, 200));
+                    }
+                };
+                setTimeout(checkKeyboard, 200);
+            });
+
+            messageInput.addEventListener('blur', () => {
+                setTimeout(() => updateOffset(0), 200);
+            });
+        }
+
+        // window.resize 兜底（部分 WebView 键盘弹出时触发 resize）
+        let lastInnerHeight = window.innerHeight;
+        window.addEventListener('resize', () => {
+            const diff = lastInnerHeight - window.innerHeight;
+            if (Math.abs(diff) > 60) {
+                updateOffset(Math.max(0, diff));
+                lastInnerHeight = window.innerHeight;
+            }
+        });
     }
 };
 

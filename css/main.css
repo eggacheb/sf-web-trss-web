@@ -77,6 +77,9 @@
     --spacing-md: 16px;
     --spacing-lg: 24px;
     --spacing-xl: 32px;
+    
+    /* 键盘偏移（JS 控制） */
+    --keyboard-offset: 0px;
 }
 
 /* ========== 基础重置 ========== */
@@ -1755,10 +1758,9 @@ input:checked + .toggle-slider::before {
 /* ========== 移动端键盘适配 ========== */
 @media screen and (max-width: 768px) {
     body {
-        position: relative;
         overflow: hidden;
         padding: 0;
-        height: 100vh; /* 回退高度 */
+        height: 100vh;
     }
 
     .chat-container {
@@ -1767,20 +1769,21 @@ input:checked + .toggle-slider::before {
         -webkit-overflow-scrolling: touch;
         margin: 0;
         border-radius: 0;
-        padding-bottom: 80px; /* 留出底部输入框空间 */
+        padding-bottom: 80px;
     }
 
     .input-container {
-        position: absolute;
-        bottom: env(safe-area-inset-bottom, 8px);
+        position: fixed;
+        bottom: 0;
         left: 0;
         right: 0;
         width: 100%;
         max-width: none;
-        transform: none;
+        transform: translateY(var(--keyboard-offset));
         padding: 8px 12px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
         z-index: 999;
-        transition: none; /* 禁用过渡动画，防止闪烁 */
+        transition: none;
     }
     
     .input-wrapper {
