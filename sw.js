@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sfchat-v8';
+const CACHE_NAME = 'sfchat-v9';
 const urlsToCache = [
   './',
   'index.html',
