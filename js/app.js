@@ -1517,7 +1517,7 @@ const EventBinder = {
             });
         });
         
-        // 移动端适配 — 用 visual viewport 的遮挡量统一驱动输入框和消息区
+        // 移动端适配 — 只同步 app shell 高度，输入区保持正常 flex 流
         this.initMobileSupport();
     },
 
@@ -1553,47 +1553,32 @@ const EventBinder = {
         }
     },
 
-    // 移动端支持 — 输入框锚定 visual viewport，页面高度不再由 JS 接管
+    // 移动端支持 — 不再移动输入框，只让 app 高度等于可视视口高度
     initMobileSupport() {
-        const input = document.querySelector('.input-container');
-        if (!input) return;
-
+        const isMobileLayout = () => window.matchMedia('(max-width: 768px)').matches;
         const root = document.documentElement;
-        const KEYBOARD_THRESHOLD = 60;
         let pendingFrame = 0;
-        let visualViewportBaseline = window.visualViewport?.height || window.innerHeight || 0;
-        let fallbackViewportHeight = window.innerHeight || 0;
 
-        const setPxVar = (name, value) => {
-            root.style.setProperty(name, Math.max(0, Math.round(value)) + 'px');
-        };
-
-        const getVisualViewportHeight = () => window.visualViewport?.height || window.innerHeight || 0;
-
-        const getKeyboardInset = () => {
-            if (window.visualViewport) {
-                const currentHeight = getVisualViewportHeight();
-                const inset = Math.max(0, visualViewportBaseline - currentHeight);
-
-                if (inset > KEYBOARD_THRESHOLD) return inset;
-
-                visualViewportBaseline = Math.max(visualViewportBaseline, currentHeight);
-                return 0;
+        try {
+            if (navigator.virtualKeyboard) {
+                navigator.virtualKeyboard.overlaysContent = false;
             }
+        } catch (error) {
+            console.warn('VirtualKeyboard API 不可用:', error);
+        }
 
-            const currentHeight = window.innerHeight || 0;
-            const inset = Math.max(0, fallbackViewportHeight - currentHeight);
-            if (inset > KEYBOARD_THRESHOLD) return inset;
-
-            fallbackViewportHeight = Math.max(fallbackViewportHeight, currentHeight);
-            return 0;
+        const getViewportHeight = () => {
+            const height = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight;
+            return Math.max(320, Math.round(height || 0));
         };
 
         const update = () => {
             pendingFrame = 0;
-            const inputHeight = input.getBoundingClientRect().height || 72;
-            setPxVar('--input-reserve', inputHeight);
-            setPxVar('--keyboard-inset', getKeyboardInset());
+            if (isMobileLayout()) {
+                root.style.setProperty('--app-height', getViewportHeight() + 'px');
+            } else {
+                root.style.removeProperty('--app-height');
+            }
         };
 
         const scheduleUpdate = () => {
@@ -1603,17 +1588,10 @@ const EventBinder = {
 
         if (window.visualViewport) {
             window.visualViewport.addEventListener('resize', scheduleUpdate);
-            window.visualViewport.addEventListener('scroll', scheduleUpdate, { passive: true });
         }
 
         window.addEventListener('resize', scheduleUpdate);
-        window.addEventListener('orientationchange', () => {
-            setTimeout(() => {
-                visualViewportBaseline = getVisualViewportHeight();
-                fallbackViewportHeight = window.innerHeight || fallbackViewportHeight;
-                scheduleUpdate();
-            }, 250);
-        });
+        window.addEventListener('orientationchange', () => setTimeout(scheduleUpdate, 250));
 
         DOM.messageInput?.addEventListener('focus', () => {
             scheduleUpdate();
@@ -1621,12 +1599,6 @@ const EventBinder = {
         });
         DOM.messageInput?.addEventListener('blur', () => setTimeout(scheduleUpdate, 120));
         DOM.messageInput?.addEventListener('input', scheduleUpdate);
-
-        if (window.ResizeObserver) {
-            this.mobileInputObserver?.disconnect();
-            this.mobileInputObserver = new ResizeObserver(scheduleUpdate);
-            this.mobileInputObserver.observe(input);
-        }
 
         scheduleUpdate();
     },

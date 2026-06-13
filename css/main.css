@@ -79,8 +79,7 @@
     --spacing-xl: 32px;
 
     /* 移动端键盘布局 */
-    --keyboard-inset: 0px;
-    --input-reserve: 72px;
+    --app-height: 100dvh;
 }
 
 /* ========== 基础重置 ========== */
@@ -93,6 +92,8 @@
 html {
     font-size: 16px;
     -webkit-text-size-adjust: 100%;
+    height: 100%;
+    overflow: hidden;
 }
 
 body {
@@ -107,10 +108,13 @@ body {
     font-weight: 500;
     /* vh fallback + dvh: dvh 支持时跟随动态视口，旧浏览器退回 vh */
     height: 100vh;
-    height: 100dvh;
+    height: var(--app-height, 100dvh);
     overflow: hidden;
     color: var(--text-primary);
     line-height: 1.6;
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
 }
 
 /* 添加背景装饰 */
@@ -127,6 +131,18 @@ body::before {
         radial-gradient(circle at 40% 40%, rgba(255, 218, 233, 0.4) 0%, transparent 30%);
     pointer-events: none;
     z-index: 0;
+}
+
+.app-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 900px;
+    height: 100%;
+    min-height: 0;
+    position: relative;
+    z-index: 1;
+    gap: var(--spacing-md);
 }
 
 /* ========== 滚动条美化 ========== */
@@ -155,16 +171,15 @@ body::before {
     display: flex;
     flex-direction: column;
     width: 100%;
-    max-width: 900px;
-    height: calc(100vh - 48px);
-    height: calc(100dvh - 48px);
-    margin: 0 auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    margin: 0;
     position: relative;
-    z-index: 1;
     background: rgba(255, 255, 255, 0.85);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    padding: var(--spacing-lg) var(--spacing-xl) calc(var(--input-reserve, 72px) + var(--spacing-lg));
+    padding: var(--spacing-lg) var(--spacing-xl) var(--spacing-md);
     box-shadow: var(--shadow-lg), inset 0 0 60px rgba(255, 182, 193, 0.1);
     border-radius: var(--radius-xl);
     border: 1px solid rgba(255, 182, 193, 0.3);
@@ -201,13 +216,11 @@ body::before {
 
 /* ========== 输入区域 ========== */
 .input-container {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: calc(100% - 48px);
-    max-width: 900px;
-    z-index: 999;
+    position: relative;
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: none;
+    z-index: 2;
     transition: none;
 }
 
@@ -1606,11 +1619,13 @@ input:checked + .toggle-slider::before {
     body {
         padding: 12px;
     }
+
+    .app-shell {
+        gap: 12px;
+    }
     
     .chat-container {
-        height: calc(100vh - 24px);
-        height: calc(100dvh - 24px);
-        padding: 16px 16px calc(var(--input-reserve, 72px) + 16px);
+        padding: 16px;
         border-radius: var(--radius-lg);
     }
     
@@ -1619,8 +1634,7 @@ input:checked + .toggle-slider::before {
     }
     
     .input-container {
-        bottom: 16px;
-        width: calc(100% - 24px);
+        width: 100%;
     }
     
     .input-wrapper {
@@ -1724,14 +1738,11 @@ input:checked + .toggle-slider::before {
     }
     
     .chat-container {
-        height: calc(100vh - 16px);
-        height: calc(100dvh - 16px);
-        padding: 12px 12px calc(var(--input-reserve, 72px) + 12px);
+        padding: 12px;
     }
     
     .input-container {
-        bottom: 12px;
-        width: calc(100% - 16px);
+        width: 100%;
     }
     
     .message {
@@ -1780,19 +1791,30 @@ input:checked + .toggle-slider::before {
         overflow: hidden;
         padding: 0;
         height: 100vh;
-        height: 100dvh;
+        height: var(--app-height, 100dvh);
+    }
+
+    .app-shell {
+        width: 100%;
+        max-width: none;
+        height: 100%;
+        gap: 0;
     }
 
     .chat-container {
-        height: 100%;
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
         margin: 0;
         border-radius: 0;
-        padding: 0 0 calc(var(--input-reserve, 72px) + var(--keyboard-inset, 0px));
+        padding: 0;
         transition: none;
     }
 
     .messages-area {
-        height: 100%;
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
         overscroll-behavior: contain;
@@ -1800,17 +1822,18 @@ input:checked + .toggle-slider::before {
     }
 
     .input-container {
-        position: fixed;
-        bottom: var(--keyboard-inset, 0px);
-        left: 0;
-        right: 0;
-        width: auto;
+        position: relative;
+        flex: 0 0 auto;
+        bottom: auto;
+        left: auto;
+        right: auto;
+        width: 100%;
         max-width: none;
-        z-index: 999;
+        z-index: 2;
         padding: 0 8px max(8px, env(safe-area-inset-bottom, 8px));
         transform: none;
         transition: none;
-        will-change: bottom;
+        will-change: auto;
     }
     
     .input-wrapper {
