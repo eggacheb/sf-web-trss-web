@@ -101,7 +101,8 @@ body {
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     font-weight: 500;
-    height: 100vh;
+    /* vh → dvh: 在 Android Chrome PWA 下随键盘动态调整，浏览器原生处理，不需要 JS */
+    height: 100dvh;
     overflow: hidden;
     color: var(--text-primary);
     line-height: 1.6;

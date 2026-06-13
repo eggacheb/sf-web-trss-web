@@ -1499,8 +1499,7 @@ const EventBinder = {
             });
         });
         
-        // 移动端适配
-        this.initMobileSupport();
+        // 移动端适配 — 交由浏览器原生处理（interactive-widget=resizes-content + 100dvh）
     },
 
     // 处理发送
@@ -1534,29 +1533,6 @@ const EventBinder = {
             MessageManager.showTypingIndicator();
         }
     },
-
-    // 移动端支持 — visualViewport.resize 控制 body 高度，flex 自然定位
-    initMobileSupport() {
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        if (!isMobile) return;
-
-        if (window.visualViewport) {
-            const update = () => {
-                const vvH = window.visualViewport.height;
-                const iH = window.innerHeight;
-                const keyboardHeight = iH - vvH;
-
-                if (keyboardHeight > 60) {
-                    document.body.style.height = vvH + 'px';
-                    window.scrollTo(0, 0);
-                } else {
-                    document.body.style.height = '';
-                }
-            };
-            window.visualViewport.addEventListener('resize', update);
-            update();
-        }
-    }
 };
 
 // ========== 应用初始化 ==========
