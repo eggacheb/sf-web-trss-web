@@ -1533,7 +1533,7 @@ const EventBinder = {
         }
     },
 
-    // 移动端支持 — 三层渐进增强
+    // 移动端支持
     initMobileSupport() {
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         if (!isMobile) return;
@@ -1567,7 +1567,11 @@ const EventBinder = {
             } catch (_) {}
         }
 
-        // L2: visualViewport API (全平台，自然处理键盘开和关)
+        // L2: visualViewport 事件
+        // 在 Android Chrome 上 interactive-widget=resizes-content 已让 layout viewport 缩小，
+        // 此时 innerHeight == visualViewport.height，getKeyboardHeight() 返回 0，offset 不生效。
+        // 在 iOS 上 resizes-content 不被支持，fallback 到 resizes-visual，
+        // 此时 innerHeight > visualViewport.height，getKeyboardHeight() 返回键盘高度，offset 生效。
         if (window.visualViewport) {
             let pending = false;
             const onViewportChange = () => {
@@ -1580,7 +1584,6 @@ const EventBinder = {
             };
             window.visualViewport.addEventListener('resize', onViewportChange);
             window.visualViewport.addEventListener('scroll', onViewportChange, { passive: true });
-            // 初始化
             onViewportChange();
         }
 
@@ -1592,42 +1595,40 @@ const EventBinder = {
             });
         }
 
-        // L3: focus 轮询兜底（部分 WebView visualViewport.resize 不触发）
+        // L3: focus 兜底 — visualViewport 事件未触发时用窗口高度检测键盘
         if (messageInput) {
-            messageInput.addEventListener('focus', () => {
-                // 在键盘动画期间多次检查
-                [200, 500, 1000].forEach(delay => {
-                    setTimeout(() => {
-                        const kh = getKeyboardHeight();
-                        if (kh > 60) updateOffset(kh + EXTRA_PADDING);
-                    }, delay);
-                });
-                // 如果彻底读不到 visualViewport 高度变化，按视口估算
-                setTimeout(() => {
-                    if (getKeyboardHeight() <= 60) {
-                        const estimated = Math.min(
-                            Math.round(window.innerHeight * 0.35),
-                            window.innerHeight - 180
-                        );
-                        updateOffset(Math.max(estimated, 200));
-                    }
-                }, 1200);
-            });
-            // 注意：╳ 没有 blur 重置偏移 ╳
-            // 偏移只随 visualViewport 变化而更新。
-            // 输入框失焦不代表键盘关闭——用户可能在选中文字复制，
-            // 此时重置偏移会导致输入框被键盘盖住。
-        }
+            let innerHeightBeforeKeyboard = window.innerHeight;
 
-        // window.resize 兜底（部分 WebView 键盘弹出时触发 window.resize）
-        let lastInnerHeight = window.innerHeight;
-        window.addEventListener('resize', () => {
-            const diff = lastInnerHeight - window.innerHeight;
-            if (Math.abs(diff) > 60) {
-                updateOffset(Math.max(0, diff));
-                lastInnerHeight = window.innerHeight;
-            }
-        });
+            const onFocusCheckKeyboard = () => {
+                setTimeout(() => {
+                    const kh = getKeyboardHeight();
+                    if (kh > 60) {
+                        updateOffset(kh + EXTRA_PADDING);
+                        return;
+                    }
+                    // getKeyboardHeight 为 0 但 innerHeight 缩小了 → resizes-content 已生效
+                    if (window.innerHeight < innerHeightBeforeKeyboard - 60) {
+                        updateOffset(0);
+                        return;
+                    }
+                    // 都读不到 → 按比例估算
+                    const estimated = Math.min(
+                        Math.round(window.innerHeight * 0.35),
+                        window.innerHeight - 180
+                    );
+                    updateOffset(Math.max(estimated, 200));
+                }, 300);
+            };
+
+            messageInput.addEventListener('focus', onFocusCheckKeyboard);
+
+            window.addEventListener('resize', () => {
+                const diff = innerHeightBeforeKeyboard - window.innerHeight;
+                if (Math.abs(diff) > 60) {
+                    innerHeightBeforeKeyboard = window.innerHeight;
+                }
+            });
+        }
     }
 };
 
