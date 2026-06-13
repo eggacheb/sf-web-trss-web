@@ -1561,24 +1561,24 @@ const EventBinder = {
         const root = document.documentElement;
         const KEYBOARD_THRESHOLD = 60;
         let pendingFrame = 0;
+        let visualViewportBaseline = window.visualViewport?.height || window.innerHeight || 0;
         let fallbackViewportHeight = window.innerHeight || 0;
 
         const setPxVar = (name, value) => {
             root.style.setProperty(name, Math.max(0, Math.round(value)) + 'px');
         };
 
-        const getLayoutViewportHeight = () => Math.max(
-            document.documentElement.clientHeight || 0,
-            window.innerHeight || 0
-        );
+        const getVisualViewportHeight = () => window.visualViewport?.height || window.innerHeight || 0;
 
         const getKeyboardInset = () => {
             if (window.visualViewport) {
-                const viewport = window.visualViewport;
-                const layoutHeight = getLayoutViewportHeight();
-                const visualBottom = viewport.offsetTop + viewport.height;
-                const inset = Math.max(0, layoutHeight - visualBottom);
-                return inset > KEYBOARD_THRESHOLD ? inset : 0;
+                const currentHeight = getVisualViewportHeight();
+                const inset = Math.max(0, visualViewportBaseline - currentHeight);
+
+                if (inset > KEYBOARD_THRESHOLD) return inset;
+
+                visualViewportBaseline = Math.max(visualViewportBaseline, currentHeight);
+                return 0;
             }
 
             const currentHeight = window.innerHeight || 0;
@@ -1607,7 +1607,13 @@ const EventBinder = {
         }
 
         window.addEventListener('resize', scheduleUpdate);
-        window.addEventListener('orientationchange', () => setTimeout(scheduleUpdate, 250));
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => {
+                visualViewportBaseline = getVisualViewportHeight();
+                fallbackViewportHeight = window.innerHeight || fallbackViewportHeight;
+                scheduleUpdate();
+            }, 250);
+        });
 
         DOM.messageInput?.addEventListener('focus', () => {
             scheduleUpdate();
