@@ -1541,24 +1541,52 @@ const EventBinder = {
         const inputContainer = document.querySelector('.input-container');
         if (!inputContainer) return;
 
-        // Use visualViewport API for precise keyboard tracking
         if (window.visualViewport) {
-            const updateInputPosition = () => {
+            // Store the full viewport height before any keyboard opens
+            let fullHeight = window.visualViewport.height;
+            let pendingUpdate = false;
+
+            const update = () => {
+                pendingUpdate = false;
                 const vv = window.visualViewport;
-                // Calculate keyboard height: difference between layout viewport and visual viewport
-                const keyboardHeight = window.innerHeight - vv.height - vv.offsetTop;
-                
-                if (keyboardHeight > 50) {
-                    // Keyboard is open - position input above it
-                    inputContainer.style.setProperty('--keyboard-offset', keyboardHeight + 'px');
+                const currentWindowHeight = window.innerHeight;
+
+                // How much did the visual viewport shrink from the reference?
+                const vvShrink = fullHeight - vv.height;
+
+                if (vvShrink > 80) {
+                    // Keyboard is likely open
+                    // Check how much the layout viewport (window.innerHeight) also shrunk
+                    const windowShrink = fullHeight - currentWindowHeight;
+                    // The portion the browser's layout resize didn't handle
+                    const unhandled = vvShrink - Math.max(0, windowShrink);
+
+                    if (unhandled > 50) {
+                        // iOS / standalone PWA: layout viewport didn't resize, need JS offset
+                        inputContainer.style.setProperty('--keyboard-offset', (unhandled + 12) + 'px');
+                    } else {
+                        // Android: layout viewport resized, fixed positioning handles it
+                        inputContainer.style.setProperty('--keyboard-offset', '12px');
+                    }
                 } else {
-                    // Keyboard is closed
+                    // Keyboard closed
                     inputContainer.style.setProperty('--keyboard-offset', '12px');
+                    // Update reference height (handles orientation change, address bar hide, etc.)
+                    if (vv.height >= fullHeight) {
+                        fullHeight = vv.height;
+                    }
                 }
             };
 
-            window.visualViewport.addEventListener('resize', updateInputPosition);
-            window.visualViewport.addEventListener('scroll', updateInputPosition);
+            const scheduleUpdate = () => {
+                if (!pendingUpdate) {
+                    pendingUpdate = true;
+                    requestAnimationFrame(update);
+                }
+            };
+
+            window.visualViewport.addEventListener('resize', scheduleUpdate);
+            window.visualViewport.addEventListener('scroll', scheduleUpdate);
         } else {
             // Fallback for browsers without visualViewport
             let initialHeight = window.innerHeight;
@@ -1567,11 +1595,13 @@ const EventBinder = {
                 const currentHeight = window.innerHeight;
                 const keyboardHeight = initialHeight - currentHeight;
                 
-                if (keyboardHeight > 50) {
-                    inputContainer.style.setProperty('--keyboard-offset', keyboardHeight + 'px');
+                if (keyboardHeight > 80) {
+                    inputContainer.style.setProperty('--keyboard-offset', (keyboardHeight + 12) + 'px');
                 } else {
                     inputContainer.style.setProperty('--keyboard-offset', '12px');
-                    initialHeight = currentHeight;
+                    if (currentHeight >= initialHeight) {
+                        initialHeight = currentHeight;
+                    }
                 }
             });
         }
