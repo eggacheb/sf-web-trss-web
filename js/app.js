@@ -1535,76 +1535,7 @@ const EventBinder = {
 
     // 移动端支持
     initMobileSupport() {
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        if (!isMobile) return;
-        
-        const inputContainer = document.querySelector('.input-container');
-        if (!inputContainer) return;
-
-        if (window.visualViewport) {
-            // Store the full viewport height before any keyboard opens
-            let fullHeight = window.visualViewport.height;
-            let pendingUpdate = false;
-
-            const update = () => {
-                pendingUpdate = false;
-                const vv = window.visualViewport;
-                const currentWindowHeight = window.innerHeight;
-
-                // How much did the visual viewport shrink from the reference?
-                const vvShrink = fullHeight - vv.height;
-
-                if (vvShrink > 80) {
-                    // Keyboard is likely open
-                    // Check how much the layout viewport (window.innerHeight) also shrunk
-                    const windowShrink = fullHeight - currentWindowHeight;
-                    // The portion the browser's layout resize didn't handle
-                    const unhandled = vvShrink - Math.max(0, windowShrink);
-
-                    if (unhandled > 50) {
-                        // iOS / standalone PWA: layout viewport didn't resize, need JS offset
-                        inputContainer.style.setProperty('--keyboard-offset', (unhandled + 12) + 'px');
-                    } else {
-                        // Android: layout viewport resized, fixed positioning handles it
-                        inputContainer.style.setProperty('--keyboard-offset', '12px');
-                    }
-                } else {
-                    // Keyboard closed
-                    inputContainer.style.setProperty('--keyboard-offset', '12px');
-                    // Update reference height (handles orientation change, address bar hide, etc.)
-                    if (vv.height >= fullHeight) {
-                        fullHeight = vv.height;
-                    }
-                }
-            };
-
-            const scheduleUpdate = () => {
-                if (!pendingUpdate) {
-                    pendingUpdate = true;
-                    requestAnimationFrame(update);
-                }
-            };
-
-            window.visualViewport.addEventListener('resize', scheduleUpdate);
-            window.visualViewport.addEventListener('scroll', scheduleUpdate);
-        } else {
-            // Fallback for browsers without visualViewport
-            let initialHeight = window.innerHeight;
-            
-            window.addEventListener('resize', () => {
-                const currentHeight = window.innerHeight;
-                const keyboardHeight = initialHeight - currentHeight;
-                
-                if (keyboardHeight > 80) {
-                    inputContainer.style.setProperty('--keyboard-offset', (keyboardHeight + 12) + 'px');
-                } else {
-                    inputContainer.style.setProperty('--keyboard-offset', '12px');
-                    if (currentHeight >= initialHeight) {
-                        initialHeight = currentHeight;
-                    }
-                }
-            });
-        }
+        // 使用纯 CSS flex 布局处理移动端键盘，不再依赖 JS
     }
 };
 

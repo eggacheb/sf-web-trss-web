@@ -1754,13 +1754,34 @@ input:checked + .toggle-slider::before {
 
 /* ========== 移动端键盘适配 ========== */
 @media screen and (max-width: 768px) {
+    body {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        height: 100dvh;
+        padding: 0;
+    }
+
+    .chat-container {
+        flex: 1;
+        min-height: 0;
+        height: auto;
+        margin: 0;
+        border-radius: 0;
+        padding-bottom: 8px;
+    }
+
     .input-container {
-        position: fixed;
-        bottom: var(--keyboard-offset, 12px);
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 999;
-        transition: bottom 0.15s ease-out;
+        position: relative;
+        bottom: auto;
+        left: auto;
+        transform: none;
+        width: 100%;
+        max-width: none;
+        flex-shrink: 0;
+        padding: 0 8px 8px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
+        transition: none;
     }
 }
 
