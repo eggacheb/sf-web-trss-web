@@ -843,7 +843,7 @@ const MarkdownRenderer = {
         if (processedContent.includes('![') && processedContent.includes('](data:image')) {
             processedContent = processedContent.replace(
                 /!\[.*?\]\((data:image\/[^)]+)\)/g,
-                '<img src="$1" style="max-width: 300px; border-radius: 8px; margin: 5px 0;">'
+                '<img src="$1" class="chat-image">'
             );
         } else {
             processedContent = processedContent.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
@@ -1430,11 +1430,66 @@ const ImageManager = {
     }
 };
 
+// ========== 图片预览 ==========
+const ImagePreview = {
+    modal: null,
+    overlay: null,
+    img: null,
+    closeBtn: null,
+    info: null,
+
+    init() {
+        this.modal = document.getElementById('image-modal');
+        this.overlay = document.getElementById('image-modal-overlay');
+        this.img = document.getElementById('image-modal-img');
+        this.closeBtn = document.getElementById('image-modal-close');
+        this.info = document.getElementById('image-modal-info');
+
+        if (!this.modal) return;
+
+        this.closeBtn?.addEventListener('click', () => this.close());
+        this.overlay?.addEventListener('click', () => this.close());
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') this.close();
+        });
+    },
+
+    open(src) {
+        if (!this.modal || !src) return;
+        this.img.src = src;
+
+        const sizeText = src.startsWith('data:') ? `(${this.formatSize(src.length)})` : '';
+        this.info.textContent = `原图 ${sizeText}`;
+
+        this.modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    },
+
+    close() {
+        if (!this.modal) return;
+        this.modal.classList.remove('active');
+        document.body.style.overflow = '';
+        setTimeout(() => { this.img.src = ''; }, 300);
+    },
+
+    formatSize(bytes) {
+        const kb = Math.round(bytes / 1024);
+        if (kb < 1024) return `${kb} KB`;
+        return `${(kb / 1024).toFixed(1)} MB`;
+    }
+};
+
 // ========== 事件绑定 ==========
 const EventBinder = {
     init() {
         // 发送消息
         DOM.sendButton?.addEventListener('click', () => this.handleSend());
+
+        // 图片点击预览（事件委托）
+        DOM.messagesArea?.addEventListener('click', (e) => {
+            const img = e.target.closest('.chat-image, .markdown-content img');
+            if (img) ImagePreview.open(img.src);
+        });
         
         // 输入框事件
         DOM.messageInput?.addEventListener('input', function() {
@@ -1699,6 +1754,7 @@ const App = {
         DOM.init();
         MarkdownRenderer.init();
         EventBinder.init();
+        ImagePreview.init();
         SettingsManager.load();
         this.registerServiceWorker();
     },

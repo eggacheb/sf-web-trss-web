@@ -2034,3 +2034,101 @@ input:checked + .toggle-slider::before {
     border-radius: var(--radius-sm);
     animation: pulse 1.5s infinite;
 }
+
+/* ========== 图片预览模态框 ========== */
+.markdown-content img.chat-image {
+    max-width: 300px;
+    border-radius: 8px;
+    margin: 5px 0;
+    cursor: pointer;
+}
+
+.image-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.image-modal.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.image-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
+}
+
+.image-modal-content {
+    position: relative;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transform: scale(0.9) translateY(10px);
+    transition: transform 0.3s ease;
+}
+
+.image-modal.active .image-modal-content {
+    transform: scale(1) translateY(0);
+}
+
+.image-modal-content img {
+    max-width: 90vw;
+    max-height: 85vh;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.image-modal-close {
+    position: absolute;
+    top: -42px;
+    right: -10px;
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease, transform 0.2s ease;
+    z-index: 10;
+    line-height: 1;
+}
+
+.image-modal-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: rotate(90deg);
+}
+
+.image-modal-info {
+    position: absolute;
+    bottom: -30px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
+    white-space: nowrap;
+    user-select: none;
+}
