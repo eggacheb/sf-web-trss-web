@@ -1149,7 +1149,7 @@ const WebSocketManager = {
             const isDomain = /[a-zA-Z]/.test(ip);
             const proxyUrl = isDomain
                 ? `wss://hws.maliya.top/proxy?url=${encodeURIComponent(directUrl)}`
-                : `wss://sfws.maliy.top?url=${encodeURIComponent(directUrl)}`;
+                : `wss://tiny-finch-4345.aggcheb.deno.net?url=${encodeURIComponent(directUrl)}`;
             const wsUrl = window.location.protocol === 'https:' ? proxyUrl : directUrl;
 
             AppState.wsConnection = new WebSocket(wsUrl);
