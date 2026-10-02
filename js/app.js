@@ -3,6 +3,15 @@
  * 主应用模块
  */
 
+// ========== 连接配置 ==========
+// 页面以 https 打开时，浏览器会拦截 ws:// 明文连接（混合内容），需要浏览器放行：
+//   · 桌面 Chrome / Edge：地址栏图标 → 网站设置 → 不安全内容 → 允许
+//   · Android Chrome / Edge：flags 页搜 insecure，把 ws://你的IP:端口 填进
+//     "Insecure origins treated as secure"（多个地址用英文逗号分隔）并启用
+// 留空 = 直接用设置面板里填的 IP:端口 直连。
+// 也可以写死一个完整地址（例如将来切换到 wss 入口）：'wss://ws.your-domain.com'
+const WS_DIRECT_URL = '';
+
 // ========== 全局状态 ==========
 const AppState = {
     wsConnection: null,
@@ -1146,11 +1155,9 @@ const WebSocketManager = {
             
             const serverAddress = port ? `${ip}:${port}` : `${ip}:8081`;
             const directUrl = `ws://${serverAddress}`;
-            const isDomain = /[a-zA-Z]/.test(ip);
-            const proxyUrl = isDomain
-                ? `wss://hws.maliya.top/proxy?url=${encodeURIComponent(directUrl)}`
-                : `wss://tiny-finch-4345.aggcheb.deno.net?url=${encodeURIComponent(directUrl)}`;
-            const wsUrl = window.location.protocol === 'https:' ? proxyUrl : directUrl;
+            const wsUrl = window.location.protocol === 'https:' && WS_DIRECT_URL
+                ? WS_DIRECT_URL
+                : directUrl;
 
             AppState.wsConnection = new WebSocket(wsUrl);
             
