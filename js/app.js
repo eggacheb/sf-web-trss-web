@@ -115,6 +115,8 @@ const MediaCache = {
     dbPromise: null,
     disabled: false,
     restoreBatchUsedIds: null,
+    serverMedia: new Map(),
+    mediaRequests: new Map(),
 
     openDb() {
         if (this.disabled || !window.indexedDB) return Promise.resolve(null);
@@ -427,10 +429,20 @@ const MediaCache = {
 
     injectMedia(normalizedContent, mediaRefs, mediaRecords) {
         let cursor = 0;
+        let placeholderIndex = -1;
         return normalizedContent.replace(/\[(图片|语音)\]/g, (placeholder, label) => {
+            placeholderIndex++;
             const expectedType = label === '语音' ? 'audio' : 'image';
+
+            const exact = mediaRefs.find(ref => ref.pos === placeholderIndex && ref.type === expectedType);
+            if (exact) {
+                const markup = this.buildMediaMarkup(exact, mediaRecords.get(exact.mediaId));
+                if (markup) return markup;
+            }
+
             while (cursor < mediaRefs.length) {
                 const ref = mediaRefs[cursor++];
+                if (ref.pos !== undefined) continue;
                 if (ref.type !== expectedType) continue;
 
                 const markup = this.buildMediaMarkup(ref, mediaRecords.get(ref.mediaId));
@@ -456,7 +468,102 @@ const MediaCache = {
             .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
     },
 
-    async restoreMessageMedia(content, role) {
+    resetServerMedia() {
+        for (const [, pending] of this.mediaRequests) {
+            clearTimeout(pending.timer);
+            pending.resolve(null);
+        }
+        this.mediaRequests.clear();
+        this.serverMedia.clear();
+    },
+
+    requestServerMedia(id, userQQ) {
+        return new Promise((resolve) => {
+            const ws = AppState.wsConnection;
+            if (!ws || !AppState.wsAuthenticated || ws.readyState !== WebSocket.OPEN) {
+                resolve(null);
+                return;
+            }
+
+            const timer = setTimeout(() => {
+                this.mediaRequests.delete(id);
+                resolve(null);
+            }, 8000);
+
+            this.mediaRequests.set(id, { resolve, timer });
+            ws.send(JSON.stringify({ type: 'getMedia', userQQ, id }));
+        });
+    },
+
+    async fetchServerMedia(ids, userQQ) {
+        const pending = [...new Set(ids)].filter(id => id && !this.serverMedia.has(id));
+        if (pending.length === 0) return;
+
+        let cursor = 0;
+        const worker = async () => {
+            while (cursor < pending.length) {
+                const id = pending[cursor++];
+                const dataUrl = await this.requestServerMedia(id, userQQ);
+                if (dataUrl) this.serverMedia.set(id, dataUrl);
+            }
+        };
+
+        await Promise.all(Array.from({ length: Math.min(4, pending.length) }, worker));
+    },
+
+    resolveServerMedia(id, dataUrl) {
+        const pending = this.mediaRequests.get(id);
+        if (!pending) {
+            if (dataUrl) this.serverMedia.set(id, dataUrl);
+            return;
+        }
+
+        clearTimeout(pending.timer);
+        this.mediaRequests.delete(id);
+        if (dataUrl) this.serverMedia.set(id, dataUrl);
+        pending.resolve(dataUrl || null);
+    },
+
+    injectServerMedia(content, serverMedias) {
+        if (!Array.isArray(serverMedias) || serverMedias.length === 0) return content;
+
+        const { normalizedContent } = this.normalizeMessageContent(content);
+        const mediaRefs = [];
+        const mediaRecords = new Map();
+
+        serverMedias.forEach((item) => {
+            const dataUrl = this.serverMedia.get(item?.id);
+            if (!dataUrl) return;
+
+            const type = item.kind === 'record' ? 'audio' : 'image';
+            mediaRefs.push({
+                type,
+                mediaId: item.id,
+                alt: type === 'image' ? '图片' : '语音',
+                pos: Number.isInteger(item.pos) ? item.pos : undefined
+            });
+            mediaRecords.set(item.id, { dataUrl });
+        });
+
+        if (mediaRefs.length === 0) return content;
+        return this.injectMedia(normalizedContent, mediaRefs, mediaRecords);
+    },
+
+    async prefetchHistoryMedia(messages, userQQ, limit = 60) {
+        if (!Array.isArray(messages)) return;
+
+        const ids = [];
+        messages.slice(-limit).forEach((msg) => {
+            (msg?.medias || []).forEach((item) => {
+                if (item?.id && !this.serverMedia.has(item.id)) ids.push(item.id);
+            });
+        });
+
+        if (ids.length === 0) return;
+        await this.fetchServerMedia(ids, userQQ);
+    },
+
+    async restoreMessageMedia(content, role, serverMedias = null) {
         try {
             const { normalizedContent } = this.normalizeMessageContent(content);
             const scope = this.getScope();
@@ -469,16 +576,20 @@ const MediaCache = {
                 messageRecord = this.pickRestoreCandidate(scopedCandidates, normalizedContent, role, true);
             }
 
-            if (!messageRecord?.mediaRefs?.length) return content;
+            if (!messageRecord?.mediaRefs?.length) {
+                return this.injectServerMedia(content, serverMedias);
+            }
             const usedIds = this.restoreBatchUsedIds;
             if (usedIds) usedIds.add(messageRecord.id);
 
             const mediaRecords = await this.getMediaRecords(messageRecord.mediaRefs.map(ref => ref.mediaId));
-            if (mediaRecords.size === 0) return content;
+            if (mediaRecords.size === 0) {
+                return this.injectServerMedia(content, serverMedias);
+            }
             return this.injectMedia(normalizedContent, messageRecord.mediaRefs, mediaRecords);
         } catch (error) {
             console.warn('恢复媒体缓存失败:', error);
-            return content;
+            return this.injectServerMedia(content, serverMedias);
         }
     },
 
@@ -1036,7 +1147,7 @@ const MessageManager = {
         if (shouldSave) {
             await MediaCache.cacheMessageMedia(content, role, options);
         } else {
-            renderContent = await MediaCache.restoreMessageMedia(content, role);
+            renderContent = await MediaCache.restoreMessageMedia(content, role, options.serverMedias);
         }
 
         const messageDiv = document.createElement('div');
@@ -1246,13 +1357,16 @@ const WebSocketManager = {
                 MessageManager.removeTypingIndicator();
             } else if (msgObj.type === 'history') {
                 MessageManager.clearMessages();
+                MediaCache.resetServerMedia();
                 await MediaCache.syncWithHistory(msgObj.messages);
                 if (Array.isArray(msgObj.messages)) {
+                    const historyUserQQ = document.getElementById('user-qq')?.value.trim() || 'web_user';
+                    await MediaCache.prefetchHistoryMedia(msgObj.messages, historyUserQQ);
                     MediaCache.beginRestoreBatch();
                     try {
                         for (const msg of msgObj.messages) {
                             if (msg && msg.content) {
-                                await MessageManager.addMessage(msg.content, msg.role === 'user' ? 'right' : 'left', false);
+                                await MessageManager.addMessage(msg.content, msg.role === 'user' ? 'right' : 'left', false, { serverMedias: msg.medias });
                             }
                         }
                     } finally {
@@ -1260,7 +1374,12 @@ const WebSocketManager = {
                     }
                 }
                 MessageManager.removeTypingIndicator();
+            } else if (msgObj.type === 'media') {
+                MediaCache.resolveServerMedia(msgObj.id, msgObj.dataUrl);
+            } else if (msgObj.type === 'mediaMissing') {
+                MediaCache.resolveServerMedia(msgObj.id, null);
             } else if (msgObj.type === 'historyCleared') {
+                MediaCache.resetServerMedia();
                 await MediaCache.clearCurrentScope();
                 MessageManager.clearMessages();
                 Utils.showToast('历史记录已清空');
@@ -1550,6 +1669,7 @@ const EventBinder = {
         document.getElementById('clear-button')?.addEventListener('click', async () => {
             if (await Utils.showConfirm('确定要清空当前页面吗？')) {
                 const userQQ = document.getElementById('user-qq')?.value.trim() || 'web_user';
+                MediaCache.resetServerMedia();
                 await MediaCache.clearCurrentScope();
                 if (AppState.wsConnected && AppState.wsAuthenticated) {
                     AppState.wsConnection.send(JSON.stringify({ type: 'clearHistory', userQQ }));
