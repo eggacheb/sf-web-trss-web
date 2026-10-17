@@ -1735,110 +1735,33 @@ const EventBinder = {
         }
     },
 
-    // 移动端支持 — 输入区留在 flex 流，只同步键盘后的 app 可见高度
+    // 移动端支持 — 只跟随浏览器给出的真实可见高度，不猜测键盘高度
+    // visualViewport.height 本身就是「用户现在能看到的区域」，键盘弹起时浏览器
+    // 会把它扣掉，收起时自动还原。所以直接同步即可，不需要 focus 状态、基准高度
+    // 或任何按比例估算 —— 那些猜测正是收起键盘后留下半屏空白的原因。
     initMobileSupport() {
         const isMobileLayout = () => window.matchMedia('(max-width: 768px)').matches;
         const root = document.documentElement;
         const input = DOM.messageInput;
-        const minAppHeight = 320;
-        const keyboardThreshold = 80;
         let pendingFrame = 0;
-        let inputFocused = false;
-        let closedViewportHeight = 0;
-        let focusBaselineHeight = 0;
-        let lastFocusTime = 0;
-        let virtualKeyboard = null;
 
-        try {
-            if (navigator.virtualKeyboard) {
-                navigator.virtualKeyboard.overlaysContent = true;
-                virtualKeyboard = navigator.virtualKeyboard;
-            }
-        } catch (error) {
-            console.warn('VirtualKeyboard API 不可用:', error);
-        }
-
-        const clampHeight = (height) => Math.max(minAppHeight, Math.round(height || 0));
-
-        const readViewportHeight = () => {
-            const height = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight;
-            return clampHeight(height);
-        };
-
-        const readVirtualKeyboardAppHeight = () => {
-            const rect = virtualKeyboard?.boundingRect;
-            const height = rect?.height || 0;
-            if (height < keyboardThreshold) return 0;
-
-            const viewportTop = window.visualViewport?.offsetTop || 0;
-            const keyboardTop = Math.round(rect.top || 0);
-            if (keyboardTop > viewportTop + keyboardThreshold) {
-                return clampHeight(keyboardTop - viewportTop);
-            }
-
-            const baselineHeight = focusBaselineHeight || closedViewportHeight || readViewportHeight();
-            return clampHeight(baselineHeight - height);
-        };
-
-        const estimateKeyboardHeight = (height) => {
-            const available = Math.max(0, height - minAppHeight);
-            if (!available) return 0;
-
-            const estimated = Math.round(height * 0.42);
-            return Math.min(Math.max(estimated, 260), Math.min(420, available));
-        };
-
-        const syncClosedViewportHeight = (height) => {
-            if (!closedViewportHeight || Math.abs(closedViewportHeight - height) > 96) {
-                closedViewportHeight = height;
-                return;
-            }
-
-            closedViewportHeight = Math.max(closedViewportHeight, height);
-        };
-
-        const captureFocusBaseline = () => {
-            const height = readViewportHeight();
-            closedViewportHeight = height;
-            focusBaselineHeight = height;
-            lastFocusTime = Date.now();
-        };
-
-        const getAppHeight = () => {
-            const viewportHeight = readViewportHeight();
-
-            if (!inputFocused) {
-                syncClosedViewportHeight(viewportHeight);
-                focusBaselineHeight = 0;
-                return viewportHeight;
-            }
-
-            const baselineHeight = focusBaselineHeight || closedViewportHeight || viewportHeight;
-            const virtualKeyboardAppHeight = readVirtualKeyboardAppHeight();
-            if (virtualKeyboardAppHeight) {
-                return virtualKeyboardAppHeight;
-            }
-
-            const viewportShrink = baselineHeight - viewportHeight;
-            if (viewportShrink >= keyboardThreshold) {
-                return viewportHeight;
-            }
-
-            if (Date.now() - lastFocusTime < 120) {
-                return viewportHeight;
-            }
-
-            return clampHeight(baselineHeight - estimateKeyboardHeight(baselineHeight));
+        const readVisibleHeight = () => {
+            const viewport = window.visualViewport;
+            const height = viewport ? viewport.height : window.innerHeight;
+            return Math.round(height || 0);
         };
 
         const update = () => {
             pendingFrame = 0;
-            if (isMobileLayout()) {
-                root.style.setProperty('--app-height', getAppHeight() + 'px');
+            if (!isMobileLayout()) {
+                root.style.removeProperty('--app-height');
+                return;
+            }
+            const height = readVisibleHeight();
+            if (height > 0) {
+                root.style.setProperty('--app-height', height + 'px');
             } else {
                 root.style.removeProperty('--app-height');
-                closedViewportHeight = 0;
-                focusBaselineHeight = 0;
             }
         };
 
@@ -1847,29 +1770,23 @@ const EventBinder = {
             pendingFrame = requestAnimationFrame(update);
         };
 
-        if (window.visualViewport) {
-            window.visualViewport.addEventListener('resize', scheduleUpdate);
+        // 键盘动画、浏览器工具栏收起都会晚于事件本身，补几次采样即可收敛
+        const nudge = () => {
+            [0, 80, 250, 500].forEach(delay => setTimeout(scheduleUpdate, delay));
+        };
+
+        const viewport = window.visualViewport;
+        if (viewport) {
+            viewport.addEventListener('resize', scheduleUpdate);
+            viewport.addEventListener('scroll', scheduleUpdate);
         }
-
-        virtualKeyboard?.addEventListener?.('geometrychange', scheduleUpdate);
         window.addEventListener('resize', scheduleUpdate);
-        window.addEventListener('orientationchange', () => {
-            closedViewportHeight = 0;
-            focusBaselineHeight = 0;
-            [80, 250, 600].forEach(delay => setTimeout(scheduleUpdate, delay));
+        window.addEventListener('orientationchange', nudge);
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) scheduleUpdate();
         });
-
-        input?.addEventListener('focus', () => {
-            inputFocused = true;
-            captureFocusBaseline();
-            scheduleUpdate();
-            [80, 250, 600].forEach(delay => setTimeout(scheduleUpdate, delay));
-        });
-        input?.addEventListener('blur', () => {
-            inputFocused = false;
-            [120, 300, 600].forEach(delay => setTimeout(scheduleUpdate, delay));
-        });
-        input?.addEventListener('input', scheduleUpdate);
+        input?.addEventListener('focus', nudge);
+        input?.addEventListener('blur', nudge);
 
         scheduleUpdate();
     },
