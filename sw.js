@@ -1,11 +1,11 @@
-const CACHE_NAME = 'sfchat-v14';
+const CACHE_NAME = 'sfchat-v15';
 const urlsToCache = [
   './',
   'index.html',
   'manifest.json',
-  'css/main.css?v=20261017c',
+  'css/main.css?v=20261017d',
   'css/github.min.css',
-  'js/app.js?v=20261017c',
+  'js/app.js?v=20261017d',
   'js/marked.min.js',
   'js/highlight.min.js',
   'js/mathjax/tex-mml-chtml.js',

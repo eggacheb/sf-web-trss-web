@@ -527,7 +527,6 @@ const MediaCache = {
     injectServerMedia(content, serverMedias) {
         if (!Array.isArray(serverMedias) || serverMedias.length === 0) return content;
 
-        const { normalizedContent } = this.normalizeMessageContent(content);
         const mediaRefs = [];
         const mediaRecords = new Map();
 
@@ -546,7 +545,8 @@ const MediaCache = {
         });
 
         if (mediaRefs.length === 0) return content;
-        return this.injectMedia(normalizedContent, mediaRefs, mediaRecords);
+        // 用原文注入：normalizedContent 只用于匹配缓存，它会把缩进和连续空格压平
+        return this.injectMedia(content, mediaRefs, mediaRecords);
     },
 
     async prefetchHistoryMedia(messages, userQQ, limit = 60) {
@@ -586,7 +586,7 @@ const MediaCache = {
             if (mediaRecords.size === 0) {
                 return this.injectServerMedia(content, serverMedias);
             }
-            return this.injectMedia(normalizedContent, messageRecord.mediaRefs, mediaRecords);
+            return this.injectMedia(content, messageRecord.mediaRefs, mediaRecords);
         } catch (error) {
             console.warn('恢复媒体缓存失败:', error);
             return this.injectServerMedia(content, serverMedias);
