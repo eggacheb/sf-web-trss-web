@@ -12,6 +12,11 @@
 // 也可以写死一个完整地址（例如将来切换到 wss 入口）：'wss://ws.your-domain.com'
 const WS_DIRECT_URL = '';
 
+// ========== 版本信息 ==========
+// 改 app.js / main.css 时同步更新：这里、index.html 的 ?v=、sw.js 的 CACHE_NAME
+const APP_VERSION = '1.5.0';
+const APP_BUILD = '2026-10-18 00:05';
+
 // ========== 全局状态 ==========
 const AppState = {
     wsConnection: null,
@@ -1829,6 +1834,32 @@ const App = {
         ImagePreview.init();
         SettingsManager.load();
         this.registerServiceWorker();
+        this.renderVersionInfo();
+    },
+
+    // 关于页的版本信息：用来确认浏览器到底跑到哪一版
+    async renderVersionInfo() {
+        const set = (id, text) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = text;
+        };
+
+        set('app-version', APP_VERSION);
+        set('app-build', APP_BUILD);
+        console.info(`[SFChat] 前端 ${APP_VERSION}（${APP_BUILD}）`);
+
+        if (!('caches' in window)) {
+            set('app-cache', '浏览器不支持');
+            return;
+        }
+
+        try {
+            const names = await caches.keys();
+            const own = names.filter(name => name.startsWith('sfchat-')).sort();
+            set('app-cache', own.length ? own.join(' / ') : '无');
+        } catch (error) {
+            set('app-cache', '读取失败');
+        }
     },
 
     registerServiceWorker() {

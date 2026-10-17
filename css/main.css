@@ -1454,6 +1454,41 @@ input:checked + .toggle-slider::before {
     color: var(--primary-pink);
 }
 
+/* 关于页的版本信息 */
+.about-content .about-meta {
+    list-style: none;
+    padding-left: 0;
+    margin: 4px 0 0;
+}
+
+.about-content .about-meta li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0;
+    padding: 7px 0;
+    border-bottom: 1px dashed rgba(255, 182, 193, 0.35);
+}
+
+.about-meta code {
+    font-family: var(--font-code);
+    font-size: 0.88em;
+    color: var(--primary-pink);
+    background: rgba(255, 182, 193, 0.14);
+    padding: 1px 8px;
+    border-radius: 6px;
+    text-align: right;
+    word-break: break-all;
+}
+
+.about-hint {
+    margin-top: 10px;
+    font-size: 0.84em;
+    color: var(--text-light);
+    line-height: 1.6;
+}
+
 
 /* ========== 消息提示和确认对话框 ========== */
 .message-toast {
