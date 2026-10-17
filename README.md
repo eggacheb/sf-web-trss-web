@@ -161,36 +161,13 @@ sf-web-trss-web/
 
 `app.js` 内部按模块组织：连接配置 → 全局状态 → 工具函数 → 媒体缓存 → Markdown 渲染 → 消息管理 → WebSocket 管理 → 设置管理 → 图片管理 → 事件绑定 → 初始化。
 
-## 移动端键盘适配
+## 移动端键盘
 
-只有一条规则：**`--app-height` 永远等于 `visualViewport.height`**。
+布局高度只跟随浏览器给出的可见区域，不估算键盘高度：
 
-```js
-// js/app.js · initMobileSupport()
-root.style.setProperty('--app-height', Math.round(window.visualViewport.height) + 'px');
-```
-
-`visualViewport.height` 是浏览器给出的「用户当前真正能看到的区域」——键盘弹起时它自己会变小，收起时自己会变大。`body { height: var(--app-height) }` 跟着走，输入框就在 flex 流的末尾，天然贴着键盘上沿。
-
-这套方案成立的前提是让浏览器自己收缩视口（`resizes-content`：布局视口和可视视口一起缩，页面不会被滚来滚去）：
-
-```html
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
-```
-
-浏览器不支持这个提示时会退回默认的 `resizes-visual`（只缩可视视口），`visualViewport.height` 依然会变，JS 照样能读到正确值。iOS Safari 忽略这个提示，但它本来就会缩可视视口，也走同一条路径。
-
-### 三条不要做的事
-
-1. **不要改成 `interactive-widget=overlays-content`。** 它会让键盘浮在内容上方、`visualViewport` 完全不变化，你就只能靠 VirtualKeyboard API 自己算高度，算错一次就是半屏空白或输入框被盖住。
-2. **不要估算键盘高度。** 任何 `height * 0.42` 之类的猜测都假设「键盘一定开着」，但用户按下返回键收起键盘时输入框通常**不会失焦**，这个假设直接失效——界面会按「键盘还开着」渲染，留下半屏背景色。
-3. **不要用 `focus` / `blur` 推断键盘状态。** Android 返回键收键盘不触发 `blur`，iOS 点键盘上的「完成」也不一定触发。只认 `visualViewport` 的 `resize` 事件。
-
-### 这段历史值得记住
-
-2026-06-13 那天，16:10 到 21:58 之间连续产生了 21 个 `fix(mobile)` 提交，反复在 `position: fixed`、flex 布局、`scrollTo(0,0)`、`100dvh`、VirtualKeyboard API 之间来回换。当时用的浏览器是狐猴浏览器，它装 PWA 时对 viewport 的支持不完整，所以无论怎么改都不对——问题根本不在代码。
-
-换到 Edge 之后原生行为就是正常的。最后留下来的是 `a9a97eb` 那版「overlays-content + 按比例估算」的兜底，它反而把 Edge 上正常的收起动作算成了「键盘仍占 42% 屏高」，于是有了收起键盘后下半屏空白的现象。现在的实现把这个兜底整个删掉了，只保留浏览器原生信号。
+- `js/app.js` 的 `initMobileSupport()` 把 `visualViewport.height` 写进 `--app-height`；iOS 上视觉视口下移时，用 `offsetTop` 补到 `body` 的 `padding-top`
+- `index.html` 必须保留 `interactive-widget=resizes-content`。不要改成 `overlays-content`——它会让视口永不变化，只剩 `focus` / `blur` 可猜，而 Android 返回键收键盘通常不失焦
+- 判断条件用 `(pointer: coarse)`，横屏和平板同样生效；捏合缩放（`scale !== 1`）时跳过更新
 
 ## 发版注意
 

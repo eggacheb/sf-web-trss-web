@@ -1740,28 +1740,56 @@ const EventBinder = {
     // 会把它扣掉，收起时自动还原。所以直接同步即可，不需要 focus 状态、基准高度
     // 或任何按比例估算 —— 那些猜测正是收起键盘后留下半屏空白的原因。
     initMobileSupport() {
-        const isMobileLayout = () => window.matchMedia('(max-width: 768px)').matches;
+        // 键盘处理和屏幕宽度无关：横屏手机、平板同样需要，按「是不是触摸设备」判断
+        const isHandheldLayout = () =>
+            window.matchMedia('(max-width: 768px), (pointer: coarse)').matches;
         const root = document.documentElement;
+        const body = document.body;
         const input = DOM.messageInput;
         let pendingFrame = 0;
 
-        const readVisibleHeight = () => {
-            const viewport = window.visualViewport;
-            const height = viewport ? viewport.height : window.innerHeight;
-            return Math.round(height || 0);
+        const reset = () => {
+            root.style.removeProperty('--app-height');
+            body.style.removeProperty('padding-top');
         };
 
         const update = () => {
             pendingFrame = 0;
-            if (!isMobileLayout()) {
-                root.style.removeProperty('--app-height');
+            if (!isHandheldLayout()) {
+                reset();
                 return;
             }
-            const height = readVisibleHeight();
-            if (height > 0) {
-                root.style.setProperty('--app-height', height + 'px');
+
+            const vv = window.visualViewport;
+            if (!vv) {
+                root.style.setProperty('--app-height', Math.round(window.innerHeight) + 'px');
+                body.style.removeProperty('padding-top');
+                return;
+            }
+
+            // 捏合缩放同样会让 visualViewport 变小，那不是键盘，保持缩放前的值
+            const scale = vv.scale || 1;
+            if (Math.abs(scale - 1) > 0.01 || Math.abs(vv.width - window.innerWidth) > 1) return;
+
+            const visibleHeight = Math.round(vv.height || 0);
+            if (!visibleHeight) {
+                reset();
+                return;
+            }
+
+            // iOS 不认 resizes-content：键盘弹起时视觉视口可能整体下移 offsetTop，
+            // 只把高度设成 visibleHeight 会让顶部被裁、底部留白。可见区域的底边是
+            // offsetTop + visibleHeight，用它当整页高度，再用 padding-top 把内容推下去。
+            const layoutHeight = Math.round(window.innerHeight || visibleHeight);
+            const offsetTop = Math.max(0, Math.round(vv.offsetTop || 0));
+            const appHeight = Math.min(offsetTop + visibleHeight, layoutHeight);
+            const paddingTop = Math.max(0, appHeight - visibleHeight);
+
+            root.style.setProperty('--app-height', appHeight + 'px');
+            if (paddingTop > 0) {
+                body.style.paddingTop = paddingTop + 'px';
             } else {
-                root.style.removeProperty('--app-height');
+                body.style.removeProperty('padding-top');
             }
         };
 
