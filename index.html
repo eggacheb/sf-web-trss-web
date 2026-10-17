@@ -13,6 +13,18 @@
     
     <!-- PWA配置 -->
     <link rel="manifest" href="manifest.json">
+
+    <!-- Service Worker 更新后自动刷新一次，确保页面拿到新版本的 app.js -->
+    <script>
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            let swReloading = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (swReloading) return;
+                swReloading = true;
+                window.location.reload();
+            });
+        }
+    </script>
     
     <!-- 网站图标 -->
     <link rel="icon" type="image/png" sizes="32x32" href="images/icon-32x32.png">
@@ -25,7 +37,7 @@
     <!-- <link rel="preload" href="fonts/LXGWWenKai-Regular-9375313a.ttf" as="font" type="font/ttf" crossorigin> -->
     
     <!-- 样式表 -->
-    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/main.css?v=20261017">
     
     <!-- MathJax配置 -->
     <script>
@@ -218,6 +230,6 @@
     <!-- 脚本加载 -->
     <script src="js/marked.min.js"></script>
     <script src="js/highlight.min.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/app.js?v=20261017"></script>
 </body>
 </html>

@@ -1890,7 +1890,7 @@ const App = {
         // 只在 http/https 协议下注册 ServiceWorker（本地 file:// 不支持）
         if ('serviceWorker' in navigator && location.protocol !== 'file:') {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js')
+                navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
                     .catch(err => console.warn('ServiceWorker 注册失败:', err));
             });
         }
