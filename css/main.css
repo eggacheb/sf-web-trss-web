@@ -1353,6 +1353,22 @@ body::before {
     font-weight: 500;
 }
 
+/* 「清空对话记录」是会删服务端数据的操作，独占一行并和风险色区分开 */
+.tool-button.span-2 {
+    grid-column: span 2;
+}
+
+.tool-button.danger {
+    background: linear-gradient(135deg, #fff1f0, #ffe1de);
+    color: #c0392b;
+    border-color: #f7c9c4;
+}
+
+.tool-button.danger:hover {
+    background: linear-gradient(135deg, #ffd1cc, #e57368);
+    color: var(--text-white);
+}
+
 /* 头像开关 */
 .avatar-toggle-container {
     display: flex;

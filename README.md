@@ -53,7 +53,7 @@ npx serve .
 | IP 地址或域名 | 机器人所在主机的地址 |
 | 端口 | 对应 adapter 的 `ws_port`，默认 `8082` |
 | 访问密码 | 对应 adapter 的 `access_password`，留空则免密 |
-| QQ 号 | 只用于头像和本地缓存分区，不影响服务端身份 |
+| QQ 号 | 用于头像，以及区分服务端的对话历史分区 |
 | 机器人 QQ | 同上，只影响头像 |
 
 ### HTTPS 页面连 ws:// 的问题
@@ -79,36 +79,33 @@ const WS_DIRECT_URL = 'wss://ws.your-domain.com';
 
 - 私聊对话，支持 Markdown、代码高亮、LaTeX 公式、图片点击看大图
 - 图片与语音收发
-- 历史记录：文本存服务端 Redis，媒体走本地 IndexedDB + 服务端按需拉取
-- 清空对话：同时清掉服务端历史、服务端媒体文件和本地缓存
+- 历史记录：完整消息（markdown 原文 + 媒体引用）只存服务端，浏览器不保存任何聊天记录
+- 两个清空操作：「清空页面」只清当前显示，重新连接即可恢复；「清空对话记录」删服务端历史和媒体文件
 - PWA：可添加到主屏幕，断网时仍能打开界面
 
-## 媒体缓存机制
+## 后端唯一数据源
 
-这是本仓库最需要理解的一块，分两层：
+这是本仓库最需要理解的一块：**浏览器不保存任何聊天记录**。
 
 ```text
-实时收到的图片/语音
+发消息 / 收回复
         │
-        ├─→ IndexedDB（sf_chat_media_cache）   ← 热缓存，刷新不丢、离线可看
-        └─→ 服务端 data/media/<userQQ>/        ← 冷备份，由 adapter 负责
+        ├─→ 页面即时渲染（data URL 用完即弃）
+        └─→ 后端：Redis 存原文 + media:<id> 引用，data/media/ 存媒体文件
 
-重新打开页面加载历史
+重新连接 / 换浏览器 / 清浏览器站点数据
         │
-        ├─ 1. 先查 IndexedDB：命中直接渲染（快）
-        └─ 2. 未命中 → 按 medias[].id 发 getMedia 向 adapter 拉（慢但兜底）
+        ├─ 1. loadHistory 一次拿回全部历史，文本立刻渲染
+        └─ 2. 按 content 里的 media:<id> 发 getMedia 补图片语音（异步，不阻塞）
 ```
-
-**第 2 步就是"关掉网页期间机器人主动推的图也能补回来"的关键。** 改造前历史里只有 `[图片]` 占位符，媒体永远找不回。
 
 几个实现细节：
 
-- 缓存分区 = `连接地址:端口:QQ号`，换账号或换服务器不会串数据
-- 打开历史时只预取**最近 60 条**的媒体，并发 4，单条 8 秒超时，避免一次拉几百 MB
-- 媒体缺失时保留 `[图片]` / `[语音]` 占位符，不阻塞历史回放
-- 每条媒体的 `pos` 字段标明它是这条消息里的第几个占位符，个别媒体缺失时不会让后面的图整体错位
-
-服务端默认保留 14 天或 500 MB（`media_retention_days` / `media_max_size_mb` 可配），清空对话会立刻删除。
+- Redis 里不存 base64，媒体位置写成 `![图片](media:<id>)` 或 `<audio controls src="media:<id>">`，前端按 `id` 精确替换，不再按内容猜哪张图属于哪条消息
+- 前端只在当前页面会话的**内存**里暂存已拉取的 dataUrl，刷新就重新向后端取；没有 IndexedDB、没有内容指纹匹配
+- 收到 `history` 时先同步渲染完所有消息，媒体回来后只刷新引用到该 `id` 的那几条；某张图取不到也不会让整页空白
+- 媒体缺失时保留 `[图片]` / `[语音]` 占位符，其余消息照常显示
+- 服务端默认保留 14 天或 500 MB（`media_retention_days` / `media_max_size_mb` 可配），「清空对话记录」会立刻删除
 
 ## 与 adapter 的协议
 
@@ -117,9 +114,9 @@ const WS_DIRECT_URL = 'wss://ws.your-domain.com';
 | type | 字段 | 说明 |
 |---|---|---|
 | `auth` | `password` | 密码认证 |
-| `loadHistory` | `userQQ`, `timestamp` | 加载历史 |
+| `loadHistory` | `userQQ`, `before?`, `limit?` | 加载历史，可选增量游标 |
 | `message` | `content`, `images[]`, `userQQ` | 发送消息，`images` 为 base64 或 data URL |
-| `clearHistory` | `userQQ` | 清空历史与媒体 |
+| `clearHistory` | `userQQ` | 只由「清空对话记录」按钮发送，删服务端历史与媒体 |
 | `getMedia` | `userQQ`, `id` | 按需拉取历史媒体 |
 
 **插件 → 浏览器**
@@ -127,8 +124,8 @@ const WS_DIRECT_URL = 'wss://ws.your-domain.com';
 | type | 字段 | 说明 |
 |---|---|---|
 | `auth` | `success` | 认证结果 |
-| `history` | `messages[]` | 历史列表，每条可能带 `medias` 引用 |
-| `historyCleared` | — | 清空完成 |
+| `history` | `messages[]`, `hasMore` | 历史列表；每条含 `id`、`content`（媒体为 `media:<id>` 引用）和 `medias` |
+| `historyCleared` | — | 服务端历史已清空（按钮或 `#web清空记录` 触发后广播） |
 | `typing` | `active` | 正在输入状态 |
 | `media` | `id`, `mime`, `dataUrl` | 媒体内容（base64） |
 | `mediaMissing` | `id` | 媒体已过期或被清理 |
@@ -143,7 +140,7 @@ const WS_DIRECT_URL = 'wss://ws.your-domain.com';
 sf-web-trss-web/
 ├── index.html            页面骨架 + SW 更新后自动刷新脚本
 ├── js/
-│   ├── app.js            主应用：状态 / 媒体缓存 / 渲染 / WebSocket / 设置
+│   ├── app.js            主应用：状态 / 服务端媒体 / 渲染 / WebSocket / 设置
 │   ├── marked.min.js     Markdown 渲染
 │   ├── highlight.min.js  代码高亮
 │   └── mathjax/          数学公式
@@ -159,7 +156,7 @@ sf-web-trss-web/
 └── README.md
 ```
 
-`app.js` 内部按模块组织：连接配置 → 全局状态 → 工具函数 → 媒体缓存 → Markdown 渲染 → 消息管理 → WebSocket 管理 → 设置管理 → 图片管理 → 事件绑定 → 初始化。
+`app.js` 内部按模块组织：连接配置 → 全局状态 → 工具函数 → 服务端媒体（仅会话内存） → Markdown 渲染 → 消息管理 → WebSocket 管理 → 设置管理 → 图片管理 → 事件绑定 → 初始化。
 
 ## 移动端键盘
 
@@ -180,7 +177,7 @@ sf-web-trss-web/
    <script src="js/app.js?v=YYYYMMDD"></script>
    ```
 
-2. `sw.js` 的缓存名递增：`sfchat-v12` → `sfchat-v13`
+2. `sw.js` 的缓存名递增：`sfchat-v17` → `sfchat-v18`
 
 3. `sw.js` 的 `urlsToCache` 里同步同样的版本号
 
@@ -192,4 +189,4 @@ sf-web-trss-web/
 
 现代浏览器：Chrome / Edge 88+、Safari 15+、Firefox 90+。
 
-IndexedDB 不可用时（如隐私模式）自动降级：不缓存媒体，历史里只显示占位符，其余功能不受影响。
+聊天历史完全由服务端提供，隐私模式或禁用存储不会影响消息记录；唯一受影响的是设置面板的连接参数不再跨会话保留。

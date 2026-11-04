@@ -14,8 +14,8 @@ const WS_DIRECT_URL = '';
 
 // ========== 版本信息 ==========
 // 改 app.js / main.css 时同步更新：这里、index.html 的 ?v=、sw.js 的 CACHE_NAME
-const APP_VERSION = '1.5.0';
-const APP_BUILD = '2026-10-18 00:05';
+const APP_VERSION = '1.6.0';
+const APP_BUILD = '2026-11-04 19:45';
 
 // ========== 全局状态 ==========
 const AppState = {
@@ -110,572 +110,98 @@ const Utils = {
     }
 };
 
-// ========== 媒体缓存管理 ==========
-const MediaCache = {
-    DB_NAME: 'sf_chat_media_cache',
-    DB_VERSION: 1,
-    MEDIA_STORE: 'media',
-    MESSAGE_STORE: 'messages',
-    CLEAR_HISTORY_COMMAND: '#web清空记录',
-    dbPromise: null,
-    disabled: false,
-    restoreBatchUsedIds: null,
-    serverMedia: new Map(),
-    mediaRequests: new Map(),
+// ========== 服务端媒体（仅当前页面会话，不持久化） ==========
+// 历史消息完全由后端提供：Redis 里存 media:<id> 引用，页面按需通过 getMedia 拉取。
+// 这里只缓存本次会话已经拉到的 dataUrl，刷新或换浏览器会重新向后端取，
+// 浏览器不再保存任何聊天记录，也不会再根据内容猜哪张图属于哪条消息。
+const ServerMedia = {
+    cache: new Map(),
+    requests: new Map(),
+    watched: new Map(),
+    REQUEST_TIMEOUT: 8000,
 
-    openDb() {
-        if (this.disabled || !window.indexedDB) return Promise.resolve(null);
-        if (this.dbPromise) return this.dbPromise;
+    MEDIA_IMAGE_RE: /!\[([^\]]*)\]\(media:([^)]+)\)/g,
+    MEDIA_AUDIO_RE: /<audio\b[^>]*src="media:([^"]+)"[^>]*><\/audio>/gi,
 
-        this.dbPromise = new Promise((resolve) => {
-            const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
-
-            request.onupgradeneeded = () => {
-                const db = request.result;
-
-                if (!db.objectStoreNames.contains(this.MEDIA_STORE)) {
-                    const mediaStore = db.createObjectStore(this.MEDIA_STORE, { keyPath: 'id' });
-                    mediaStore.createIndex('byScope', 'scope', { unique: false });
-                }
-
-                if (!db.objectStoreNames.contains(this.MESSAGE_STORE)) {
-                    const messageStore = db.createObjectStore(this.MESSAGE_STORE, { keyPath: 'id' });
-                    messageStore.createIndex('byScope', 'scope', { unique: false });
-                    messageStore.createIndex('byLookupKey', 'lookupKey', { unique: false });
-                }
-            };
-
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => {
-                console.warn('媒体缓存不可用:', request.error);
-                this.disabled = true;
-                this.dbPromise = null;
-                resolve(null);
-            };
-        });
-
-        return this.dbPromise;
+    reset() {
+        for (const [, pending] of this.requests) clearTimeout(pending.timer);
+        this.requests.clear();
+        this.cache.clear();
+        this.watched.clear();
     },
 
-    requestToPromise(request) {
-        return new Promise((resolve, reject) => {
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
+    extractIds(template) {
+        const ids = new Set();
+        for (const match of template.matchAll(this.MEDIA_IMAGE_RE)) ids.add(match[2]);
+        for (const match of template.matchAll(this.MEDIA_AUDIO_RE)) ids.add(match[1]);
+        return [...ids];
     },
 
-    transactionDone(transaction) {
-        return new Promise((resolve, reject) => {
-            transaction.oncomplete = () => resolve();
-            transaction.onerror = () => reject(transaction.error);
-            transaction.onabort = () => reject(transaction.error);
-        });
-    },
-
-    getScope() {
-        const ip = this.normalizeScopePart(document.getElementById('ws-ip')?.value, 'default_host');
-        const port = this.normalizeScopePart(document.getElementById('ws-port')?.value, '8081');
-        const userQQ = this.normalizeScopePart(document.getElementById('user-qq')?.value, 'web_user');
-        return `${ip}:${port}:${userQQ}`;
-    },
-
-    normalizeScopePart(value, fallback) {
-        const text = typeof value === 'string' ? value.trim() : '';
-        return (text || fallback).replace(/[^\w.-]/g, '_').slice(0, 96);
-    },
-
-    getRole(position) {
-        return position === 'right' ? 'user' : 'bot';
-    },
-
-    hashString(value) {
-        const text = String(value);
-        let hash = 2166136261;
-        for (let i = 0; i < text.length; i++) {
-            hash ^= text.charCodeAt(i);
-            hash = Math.imul(hash, 16777619);
-        }
-        return `${text.length.toString(36)}-${(hash >>> 0).toString(36)}`;
-    },
-
-    buildLookupKey(scope, role, normalizedContent) {
-        return `${scope}|${role}|${this.hashString(this.canonicalizeLookupContent(normalizedContent))}`;
-    },
-
-    buildOutgoingHistoryContent(content, imageCount = 0) {
-        const parts = [];
-        const text = typeof content === 'string' ? content.trim() : '';
-        if (text) parts.push(text);
-        for (let i = 0; i < imageCount; i++) parts.push('[图片]');
-        return parts.join(' ') || '[图片]';
-    },
-
-    canonicalizeLookupContent(content) {
-        const text = String(content || '')
-            .replace(/【\s*(图片|语音)\s*】/g, '[$1]')
-            .replace(/\[\s*(图片|语音)\s*\]/g, '[$1]')
-            .replace(/\s+/g, ' ')
-            .replace(/\s*(\[(?:图片|语音)\])\s*/g, ' $1 ')
-            .replace(/\s+/g, ' ')
-            .trim();
-        return text || '[消息]';
-    },
-
-    getPlaceholderTypes(content) {
-        return [...String(content || '').matchAll(/\[(图片|语音)\]/g)]
-            .map(([, label]) => label === '语音' ? 'audio' : 'image');
-    },
-
-    getMediaSignatureFromTypes(types) {
-        return Array.isArray(types) ? types.join('|') : '';
-    },
-
-    getMediaSignatureFromRefs(mediaRefs) {
-        return this.getMediaSignatureFromTypes((mediaRefs || []).map(ref => ref.type));
-    },
-
-    getTextFingerprint(content) {
-        return this.canonicalizeLookupContent(content)
-            .replace(/\[(?:图片|语音)\]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-    },
-
-    isSameMediaSequence(mediaRefs, placeholderTypes) {
-        if (!Array.isArray(mediaRefs) || mediaRefs.length !== placeholderTypes.length) return false;
-        return mediaRefs.every((ref, index) => ref.type === placeholderTypes[index]);
-    },
-
-    isCompatibleHistoryEntry(record, historyEntry) {
-        if (!record?.mediaRefs?.length || record.role !== historyEntry.role) return false;
-        if (!this.isSameMediaSequence(record.mediaRefs, historyEntry.placeholderTypes)) return false;
-
-        const recordText = this.getTextFingerprint(record.normalizedContent);
-        return recordText === historyEntry.textFingerprint || !recordText || !historyEntry.textFingerprint;
-    },
-
-    shouldRetainCachedMessage(record, historyEntries) {
-        if (historyEntries.some(entry => entry.lookupKey === record.lookupKey)) return true;
-        return historyEntries.some(entry => this.isCompatibleHistoryEntry(record, entry));
-    },
-
-    extractSrc(html) {
-        const match = String(html).match(/\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
-        return match ? (match[1] || match[2] || match[3] || '') : '';
-    },
-
-    parseDataUrl(dataUrl) {
-        const match = String(dataUrl).match(/^data:([^;,]+)[^,]*,/i);
-        if (!match) return null;
-        const mime = match[1].toLowerCase();
-        const type = mime.startsWith('image/') ? 'image' : mime.startsWith('audio/') ? 'audio' : '';
-        if (!type) return null;
-        return { mime, type };
-    },
-
-    normalizeMessageContent(content) {
-        const raw = String(content || '');
-        const mediaItems = [];
-        let hasImage = false;
-        let hasAudio = false;
-
-        let normalized = raw.replace(/<audio\b[\s\S]*?<\/audio>|<audio\b[^>]*>|<img\b[^>]*>|!\[([^\]]*)\]\(([^)]+)\)/gi, (match, alt, markdownUrl) => {
-            if (match.startsWith('![')) {
-                hasImage = true;
-                const media = this.parseDataUrl(markdownUrl);
-                if (media?.type === 'image') {
-                    mediaItems.push({ type: 'image', mime: media.mime, dataUrl: markdownUrl, alt: alt || '图片' });
-                }
-                return ' [图片] ';
-            }
-
-            if (/^<audio\b/i.test(match)) {
-                hasAudio = true;
-                const src = this.extractSrc(match);
-                const media = this.parseDataUrl(src);
-                if (media?.type === 'audio') {
-                    mediaItems.push({ type: 'audio', mime: media.mime, dataUrl: src });
-                }
-                return ' [语音] ';
-            }
-
-            hasImage = true;
-            const src = this.extractSrc(match);
-            const media = this.parseDataUrl(src);
-            if (media?.type === 'image') {
-                mediaItems.push({ type: 'image', mime: media.mime, dataUrl: src, alt: '图片' });
-            }
-            return ' [图片] ';
-        });
-
-        normalized = normalized
-            .replace(/<[^>]+>/g, '')
-            .replace(/[ \t]+/g, ' ')
-            .replace(/[ \t]*\n[ \t]*/g, '\n')
-            .replace(/\n{3,}/g, '\n\n')
-            .trim();
-
-        if (!normalized) {
-            if (hasImage) normalized = '[图片]';
-            else if (hasAudio) normalized = '[语音]';
-            else normalized = '[消息]';
-        }
-
-        return { normalizedContent: normalized, mediaItems };
-    },
-
-    async putRecords(mediaRecords, messageRecord) {
-        const db = await this.openDb();
-        if (!db) return;
-
-        const transaction = db.transaction([this.MEDIA_STORE, this.MESSAGE_STORE], 'readwrite');
-        const mediaStore = transaction.objectStore(this.MEDIA_STORE);
-        const messageStore = transaction.objectStore(this.MESSAGE_STORE);
-
-        mediaRecords.forEach(record => mediaStore.put(record));
-        messageStore.put(messageRecord);
-
-        await this.transactionDone(transaction);
-    },
-
-    async cacheMessageMedia(content, role, options = {}) {
-        try {
-            const extracted = this.normalizeMessageContent(content);
-            if (extracted.mediaItems.length === 0) return;
-
-            const scope = this.getScope();
-            const now = Date.now();
-            const normalizedContent = this.normalizeMessageContent(options.historyContent || extracted.normalizedContent).normalizedContent;
-            const lookupKey = this.buildLookupKey(scope, role, normalizedContent);
-            const mediaRecords = [];
-            const mediaRefs = extracted.mediaItems.map((item, index) => {
-                const mediaId = `${scope}|${item.type}|${this.hashString(item.dataUrl)}`;
-                mediaRecords.push({
-                    id: mediaId,
-                    scope,
-                    type: item.type,
-                    mime: item.mime,
-                    dataUrl: item.dataUrl,
-                    size: item.dataUrl.length,
-                    createdAt: now,
-                    lastUsedAt: now
-                });
-                return {
-                    type: item.type,
-                    mediaId,
-                    alt: item.alt || (item.type === 'image' ? `图片${index + 1}` : '语音')
-                };
+    // 后端模板 -> 可渲染内容；还没拉到的媒体先显示文字占位，不阻塞历史加载
+    materialize(template) {
+        return String(template)
+            .replace(this.MEDIA_IMAGE_RE, (match, alt, id) => {
+                const dataUrl = this.cache.get(id);
+                return dataUrl ? `![${alt || '图片'}](${dataUrl})` : `[${alt || '图片'}]`;
+            })
+            .replace(this.MEDIA_AUDIO_RE, (match, id) => {
+                const dataUrl = this.cache.get(id);
+                return dataUrl ? `<audio controls src="${dataUrl}"></audio>` : '[语音]';
             });
+    },
 
-            const messageRecord = {
-                id: `${lookupKey}|${now}|${Math.random().toString(36).slice(2, 8)}`,
-                scope,
-                role,
-                normalizedContent,
-                lookupKey,
-                lookupContent: this.canonicalizeLookupContent(normalizedContent),
-                mediaSignature: this.getMediaSignatureFromRefs(mediaRefs),
-                mediaRefs,
-                createdAt: now,
-                lastUsedAt: now
-            };
+    renderInto(element, template) {
+        const markdown = element?.querySelector('.markdown-content');
+        if (!markdown) return;
 
-            await this.putRecords(mediaRecords, messageRecord);
+        const content = this.materialize(template);
+        try {
+            markdown.innerHTML = MarkdownRenderer.render(content);
+            MarkdownRenderer.processCodeBlocks(markdown);
+            MarkdownRenderer.processPreviewBlocks(markdown);
+            MarkdownRenderer.bindMathCopyEvents(markdown);
+            MarkdownRenderer.renderMath(markdown);
         } catch (error) {
-            console.warn('缓存媒体失败:', error);
+            console.error('[sf插件] Markdown 渲染失败:', error);
+            markdown.textContent = content;
         }
     },
 
-    beginRestoreBatch() {
-        this.restoreBatchUsedIds = new Set();
-    },
-
-    endRestoreBatch() {
-        this.restoreBatchUsedIds = null;
-    },
-
-    async getAllByIndex(storeName, indexName, key) {
-        const db = await this.openDb();
-        if (!db) return [];
-
-        const transaction = db.transaction(storeName, 'readonly');
-        const index = transaction.objectStore(storeName).index(indexName);
-        const records = await this.requestToPromise(index.getAll(key));
-        await this.transactionDone(transaction);
-        return records || [];
-    },
-
-    async getMediaRecords(mediaIds) {
-        const db = await this.openDb();
-        if (!db) return new Map();
-
-        const transaction = db.transaction(this.MEDIA_STORE, 'readonly');
-        const store = transaction.objectStore(this.MEDIA_STORE);
-        const pairs = await Promise.all(mediaIds.map(async id => [id, await this.requestToPromise(store.get(id))]));
-        await this.transactionDone(transaction);
-        return new Map(pairs.filter(([, record]) => record));
-    },
-
-    buildMediaMarkup(ref, mediaRecord) {
-        if (!mediaRecord?.dataUrl) return null;
-        if (ref.type === 'audio') {
-            return `<audio controls src="${this.escapeHtmlAttribute(mediaRecord.dataUrl)}"></audio>`;
-        }
-        return `![${ref.alt || '图片'}](${mediaRecord.dataUrl})`;
-    },
-
-    escapeHtmlAttribute(value) {
-        return String(value)
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    },
-
-    injectMedia(normalizedContent, mediaRefs, mediaRecords) {
-        let cursor = 0;
-        let placeholderIndex = -1;
-        return normalizedContent.replace(/\[(图片|语音)\]/g, (placeholder, label) => {
-            placeholderIndex++;
-            const expectedType = label === '语音' ? 'audio' : 'image';
-
-            const exact = mediaRefs.find(ref => ref.pos === placeholderIndex && ref.type === expectedType);
-            if (exact) {
-                const markup = this.buildMediaMarkup(exact, mediaRecords.get(exact.mediaId));
-                if (markup) return markup;
-            }
-
-            while (cursor < mediaRefs.length) {
-                const ref = mediaRefs[cursor++];
-                if (ref.pos !== undefined) continue;
-                if (ref.type !== expectedType) continue;
-
-                const markup = this.buildMediaMarkup(ref, mediaRecords.get(ref.mediaId));
-                return markup || placeholder;
-            }
-            return placeholder;
+    // 把还缺媒体的消息登记下来，getMedia 回来后只刷新引用到该 id 的那几条
+    watch(element, template, userQQ) {
+        if (!element) return;
+        const entry = { element, template };
+        this.extractIds(template).forEach((id) => {
+            if (this.cache.has(id)) return;
+            if (!this.watched.has(id)) this.watched.set(id, new Set());
+            this.watched.get(id).add(entry);
+            this.request(id, userQQ);
         });
     },
 
-    pickRestoreCandidate(records, normalizedContent, role, allowCompatible = false) {
-        const usedIds = this.restoreBatchUsedIds;
-        const placeholderTypes = this.getPlaceholderTypes(normalizedContent);
-        const historyEntry = {
-            role,
-            placeholderTypes,
-            textFingerprint: this.getTextFingerprint(normalizedContent)
-        };
+    request(id, userQQ) {
+        if (this.cache.has(id) || this.requests.has(id)) return;
+        const ws = AppState.wsConnection;
+        if (!ws || ws.readyState !== WebSocket.OPEN || !AppState.wsAuthenticated) return;
 
-        return (records || [])
-            .filter(record => record?.role === role && record.mediaRefs?.length)
-            .filter(record => !usedIds || !usedIds.has(record.id))
-            .filter(record => !allowCompatible || this.isCompatibleHistoryEntry(record, historyEntry))
-            .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
+        const timer = setTimeout(() => this.resolve(id, null), this.REQUEST_TIMEOUT);
+        this.requests.set(id, { timer });
+        ws.send(JSON.stringify({ type: 'getMedia', userQQ, id }));
     },
 
-    resetServerMedia() {
-        for (const [, pending] of this.mediaRequests) {
+    resolve(id, dataUrl) {
+        const pending = this.requests.get(id);
+        if (pending) {
             clearTimeout(pending.timer);
-            pending.resolve(null);
+            this.requests.delete(id);
         }
-        this.mediaRequests.clear();
-        this.serverMedia.clear();
+        if (dataUrl) this.cache.set(id, dataUrl);
+
+        const entries = this.watched.get(id);
+        if (!entries) return;
+        for (const entry of entries) this.renderInto(entry.element, entry.template);
+        this.watched.delete(id);
     },
-
-    requestServerMedia(id, userQQ) {
-        return new Promise((resolve) => {
-            const ws = AppState.wsConnection;
-            if (!ws || !AppState.wsAuthenticated || ws.readyState !== WebSocket.OPEN) {
-                resolve(null);
-                return;
-            }
-
-            const timer = setTimeout(() => {
-                this.mediaRequests.delete(id);
-                resolve(null);
-            }, 8000);
-
-            this.mediaRequests.set(id, { resolve, timer });
-            ws.send(JSON.stringify({ type: 'getMedia', userQQ, id }));
-        });
-    },
-
-    async fetchServerMedia(ids, userQQ) {
-        const pending = [...new Set(ids)].filter(id => id && !this.serverMedia.has(id));
-        if (pending.length === 0) return;
-
-        let cursor = 0;
-        const worker = async () => {
-            while (cursor < pending.length) {
-                const id = pending[cursor++];
-                const dataUrl = await this.requestServerMedia(id, userQQ);
-                if (dataUrl) this.serverMedia.set(id, dataUrl);
-            }
-        };
-
-        await Promise.all(Array.from({ length: Math.min(4, pending.length) }, worker));
-    },
-
-    resolveServerMedia(id, dataUrl) {
-        const pending = this.mediaRequests.get(id);
-        if (!pending) {
-            if (dataUrl) this.serverMedia.set(id, dataUrl);
-            return;
-        }
-
-        clearTimeout(pending.timer);
-        this.mediaRequests.delete(id);
-        if (dataUrl) this.serverMedia.set(id, dataUrl);
-        pending.resolve(dataUrl || null);
-    },
-
-    injectServerMedia(content, serverMedias) {
-        if (!Array.isArray(serverMedias) || serverMedias.length === 0) return content;
-
-        const mediaRefs = [];
-        const mediaRecords = new Map();
-
-        serverMedias.forEach((item) => {
-            const dataUrl = this.serverMedia.get(item?.id);
-            if (!dataUrl) return;
-
-            const type = item.kind === 'record' ? 'audio' : 'image';
-            mediaRefs.push({
-                type,
-                mediaId: item.id,
-                alt: type === 'image' ? '图片' : '语音',
-                pos: Number.isInteger(item.pos) ? item.pos : undefined
-            });
-            mediaRecords.set(item.id, { dataUrl });
-        });
-
-        if (mediaRefs.length === 0) return content;
-        // 用原文注入：normalizedContent 只用于匹配缓存，它会把缩进和连续空格压平
-        return this.injectMedia(content, mediaRefs, mediaRecords);
-    },
-
-    async prefetchHistoryMedia(messages, userQQ, limit = 60) {
-        if (!Array.isArray(messages)) return;
-
-        const ids = [];
-        messages.slice(-limit).forEach((msg) => {
-            (msg?.medias || []).forEach((item) => {
-                if (item?.id && !this.serverMedia.has(item.id)) ids.push(item.id);
-            });
-        });
-
-        if (ids.length === 0) return;
-        await this.fetchServerMedia(ids, userQQ);
-    },
-
-    async restoreMessageMedia(content, role, serverMedias = null) {
-        try {
-            const { normalizedContent } = this.normalizeMessageContent(content);
-            const scope = this.getScope();
-            const lookupKey = this.buildLookupKey(scope, role, normalizedContent);
-            const candidates = await this.getAllByIndex(this.MESSAGE_STORE, 'byLookupKey', lookupKey);
-            let messageRecord = this.pickRestoreCandidate(candidates, normalizedContent, role);
-
-            if (!messageRecord) {
-                const scopedCandidates = await this.getAllByIndex(this.MESSAGE_STORE, 'byScope', scope);
-                messageRecord = this.pickRestoreCandidate(scopedCandidates, normalizedContent, role, true);
-            }
-
-            if (!messageRecord?.mediaRefs?.length) {
-                return this.injectServerMedia(content, serverMedias);
-            }
-            const usedIds = this.restoreBatchUsedIds;
-            if (usedIds) usedIds.add(messageRecord.id);
-
-            const mediaRecords = await this.getMediaRecords(messageRecord.mediaRefs.map(ref => ref.mediaId));
-            if (mediaRecords.size === 0) {
-                return this.injectServerMedia(content, serverMedias);
-            }
-            return this.injectMedia(content, messageRecord.mediaRefs, mediaRecords);
-        } catch (error) {
-            console.warn('恢复媒体缓存失败:', error);
-            return this.injectServerMedia(content, serverMedias);
-        }
-    },
-
-    async deleteRecords(storeName, ids) {
-        if (ids.length === 0) return;
-        const db = await this.openDb();
-        if (!db) return;
-
-        const transaction = db.transaction(storeName, 'readwrite');
-        const store = transaction.objectStore(storeName);
-        ids.forEach(id => store.delete(id));
-        await this.transactionDone(transaction);
-    },
-
-    async clearCurrentScope() {
-        try {
-            const scope = this.getScope();
-            const [messages, media] = await Promise.all([
-                this.getAllByIndex(this.MESSAGE_STORE, 'byScope', scope),
-                this.getAllByIndex(this.MEDIA_STORE, 'byScope', scope)
-            ]);
-
-            await Promise.all([
-                this.deleteRecords(this.MESSAGE_STORE, messages.map(record => record.id)),
-                this.deleteRecords(this.MEDIA_STORE, media.map(record => record.id))
-            ]);
-        } catch (error) {
-            console.warn('清空媒体缓存失败:', error);
-        }
-    },
-
-    async syncWithHistory(messages) {
-        try {
-            const scope = this.getScope();
-            const historyEntries = [];
-
-            if (Array.isArray(messages)) {
-                messages.forEach(msg => {
-                    if (!msg || typeof msg.content !== 'string') return;
-                    const role = msg.role === 'user' ? 'user' : 'bot';
-                    const { normalizedContent } = this.normalizeMessageContent(msg.content);
-                    const placeholderTypes = this.getPlaceholderTypes(normalizedContent);
-                    historyEntries.push({
-                        role,
-                        lookupKey: this.buildLookupKey(scope, role, normalizedContent),
-                        placeholderTypes,
-                        mediaSignature: this.getMediaSignatureFromTypes(placeholderTypes),
-                        textFingerprint: this.getTextFingerprint(normalizedContent)
-                    });
-                });
-            }
-
-            const cachedMessages = await this.getAllByIndex(this.MESSAGE_STORE, 'byScope', scope);
-            const staleMessageIds = cachedMessages
-                .filter(record => !this.shouldRetainCachedMessage(record, historyEntries))
-                .map(record => record.id);
-
-            await this.deleteRecords(this.MESSAGE_STORE, staleMessageIds);
-            await this.deleteOrphanMedia(scope);
-        } catch (error) {
-            console.warn('同步媒体缓存失败:', error);
-        }
-    },
-
-    async deleteOrphanMedia(scope) {
-        const [messages, media] = await Promise.all([
-            this.getAllByIndex(this.MESSAGE_STORE, 'byScope', scope),
-            this.getAllByIndex(this.MEDIA_STORE, 'byScope', scope)
-        ]);
-
-        const usedMediaIds = new Set();
-        messages.forEach(message => {
-            (message.mediaRefs || []).forEach(ref => usedMediaIds.add(ref.mediaId));
-        });
-
-        const staleMediaIds = media
-            .filter(record => !usedMediaIds.has(record.id))
-            .map(record => record.id);
-
-        await this.deleteRecords(this.MEDIA_STORE, staleMediaIds);
-    }
 };
 
 // ========== Markdown渲染器 ==========
@@ -1140,19 +666,11 @@ const MessageManager = {
         });
     },
 
-    // 添加消息
-    async addMessage(content, position, shouldSave = true, options = {}) {
+    // 添加消息：内容完全来自调用方（实时消息或后端历史），本地不留副本
+    addMessage(content, position) {
         if (!content || typeof content !== 'string') {
             console.error('Invalid message content:', content);
-            return;
-        }
-
-        const role = MediaCache.getRole(position);
-        let renderContent = content;
-        if (shouldSave) {
-            await MediaCache.cacheMessageMedia(content, role, options);
-        } else {
-            renderContent = await MediaCache.restoreMessageMedia(content, role, options.serverMedias);
+            return null;
         }
 
         const messageDiv = document.createElement('div');
@@ -1180,20 +698,14 @@ const MessageManager = {
         const markdownContent = document.createElement('div');
         markdownContent.className = 'markdown-content';
         
-        try {
-            markdownContent.innerHTML = MarkdownRenderer.render(renderContent);
-            MarkdownRenderer.processCodeBlocks(markdownContent);
-            MarkdownRenderer.processPreviewBlocks(markdownContent);
-            MarkdownRenderer.bindMathCopyEvents(markdownContent);
-        } catch (error) {
-            console.error('Markdown parsing error:', error);
-            markdownContent.textContent = renderContent;
-        }
-        
         messageContent.appendChild(markdownContent);
         messageDiv.appendChild(avatar);
         messageDiv.appendChild(messageContent);
         DOM.messagesArea.appendChild(messageDiv);
+
+        // 实时消息里的 data URL 原样渲染；历史里的 media:<id> 会在
+        // getMedia 返回后由 ServerMedia.renderInto 原地刷新
+        ServerMedia.renderInto(messageDiv, content);
 
         // 滚动处理
         if (position === 'right') {
@@ -1203,8 +715,7 @@ const MessageManager = {
             setTimeout(() => this.scrollMessageIntoView(AppState.lastUserMessageElement), 100);
         }
         
-        // 渲染数学公式
-        MarkdownRenderer.renderMath(markdownContent);
+        return messageDiv;
     },
 
     // 显示等待指示器
@@ -1258,7 +769,7 @@ const MessageManager = {
 // ========== WebSocket管理 ==========
 const WebSocketManager = {
     // 连接WebSocket
-    async connect(ip, port, isAutoConnect = false) {
+    connect(ip, port, isAutoConnect = false) {
         if (!ip) {
             if (!isAutoConnect) Utils.showToast('请输入服务器地址');
             return;
@@ -1266,7 +777,14 @@ const WebSocketManager = {
         
         try {
             if (AppState.wsConnection) {
-                AppState.wsConnection.close();
+                // 旧连接关闭时不能再改当前连接的状态：以前它的 onclose 会把
+                // wsAuthenticated 置 false，导致新连接的 requestHistory 被跳过
+                const previous = AppState.wsConnection;
+                previous.onopen = null;
+                previous.onclose = null;
+                previous.onerror = null;
+                previous.onmessage = null;
+                previous.close();
             }
             
             const serverAddress = port ? `${ip}:${port}` : `${ip}:8081`;
@@ -1275,17 +793,21 @@ const WebSocketManager = {
                 ? WS_DIRECT_URL
                 : directUrl;
 
-            AppState.wsConnection = new WebSocket(wsUrl);
+            const ws = new WebSocket(wsUrl);
+            AppState.wsConnection = ws;
+            const isCurrent = () => AppState.wsConnection === ws;
             
             const connectionTimeout = setTimeout(() => {
+                if (!isCurrent()) return;
                 if (!AppState.wsConnected) {
-                    AppState.wsConnection.close();
+                    ws.close();
                     if (!isAutoConnect) Utils.showToast('连接超时，请检查IP和端口是否正确');
                     this.updateStatus('未连接', '#f44336');
                 }
             }, 5000);
             
-            AppState.wsConnection.onopen = () => {
+            ws.onopen = () => {
+                if (!isCurrent()) return;
                 clearTimeout(connectionTimeout);
                 AppState.wsConnected = true;
                 AppState.wsAuthenticated = false;
@@ -1293,19 +815,20 @@ const WebSocketManager = {
                 
                 this.startAutoReconnect();
                 
-                // 发送密码验证
                 const password = document.getElementById('ws-password')?.value.trim();
-                AppState.wsConnection.send(JSON.stringify({ type: 'auth', password }));
+                ws.send(JSON.stringify({ type: 'auth', password }));
             };
             
-            AppState.wsConnection.onclose = () => {
+            ws.onclose = () => {
+                if (!isCurrent()) return;
                 AppState.wsConnected = false;
                 AppState.wsAuthenticated = false;
                 this.updateStatus('未连接', '#f44336');
                 if (!isAutoConnect) Utils.showToast('连接已断开');
             };
             
-            AppState.wsConnection.onerror = (error) => {
+            ws.onerror = (error) => {
+                if (!isCurrent()) return;
                 console.error('[sf插件] WebSocket错误:', error);
                 if (!isAutoConnect) Utils.showToast('连接失败，请确保服务器已启动');
                 this.updateStatus('未连接', '#f44336');
@@ -1313,7 +836,7 @@ const WebSocketManager = {
                 MessageManager.removeTypingIndicator();
             };
             
-            AppState.wsConnection.onmessage = (event) => this.handleMessage(event);
+            ws.onmessage = (event) => this.handleMessage(event);
             
         } catch (error) {
             if (!isAutoConnect) Utils.showToast('连接失败: ' + error.message);
@@ -1322,20 +845,22 @@ const WebSocketManager = {
         }
     },
 
-    // 请求服务端历史记录
+    // 请求服务端历史记录：只认当前 socket 的真实状态，不受全局标志竞态影响
     requestHistory() {
-        if (!AppState.wsConnection || !AppState.wsAuthenticated) return;
+        const ws = AppState.wsConnection;
+        if (!ws || ws.readyState !== WebSocket.OPEN || !AppState.wsAuthenticated) return;
 
         const userQQ = document.getElementById('user-qq')?.value.trim() || 'web_user';
-        AppState.wsConnection.send(JSON.stringify({
+        ws.send(JSON.stringify({
             type: 'loadHistory',
-            userQQ: userQQ,
-            timestamp: Date.now()
+            userQQ: userQQ
         }));
     },
 
     // 处理消息
-    async handleMessage(event) {
+    handleMessage(event) {
+        // 已被新连接顶替的 socket 迟到的消息一律丢弃
+        if (event.target && event.target !== AppState.wsConnection) return;
         try {
             const msgObj = JSON.parse(event.data);
             
@@ -1361,33 +886,29 @@ const WebSocketManager = {
                 Utils.showToast('服务器错误: ' + msgObj.content);
                 MessageManager.removeTypingIndicator();
             } else if (msgObj.type === 'history') {
+                // 后端是唯一数据源：先把文本全部渲染出来，媒体异步补齐。
+                // 不再等任何预取，某张图取不到也不会让整页空白。
                 MessageManager.clearMessages();
-                MediaCache.resetServerMedia();
-                await MediaCache.syncWithHistory(msgObj.messages);
-                if (Array.isArray(msgObj.messages)) {
-                    const historyUserQQ = document.getElementById('user-qq')?.value.trim() || 'web_user';
-                    await MediaCache.prefetchHistoryMedia(msgObj.messages, historyUserQQ);
-                    MediaCache.beginRestoreBatch();
-                    try {
-                        for (const msg of msgObj.messages) {
-                            if (msg && msg.content) {
-                                await MessageManager.addMessage(msg.content, msg.role === 'user' ? 'right' : 'left', false, { serverMedias: msg.medias });
-                            }
-                        }
-                    } finally {
-                        MediaCache.endRestoreBatch();
-                    }
-                }
+                ServerMedia.reset();
                 MessageManager.removeTypingIndicator();
+                const historyUserQQ = document.getElementById('user-qq')?.value.trim() || 'web_user';
+                const messages = Array.isArray(msgObj.messages) ? msgObj.messages : [];
+                for (const msg of messages) {
+                    if (!msg || typeof msg.content !== 'string') continue;
+                    const element = MessageManager.addMessage(
+                        msg.content,
+                        msg.role === 'user' ? 'right' : 'left'
+                    );
+                    ServerMedia.watch(element, msg.content, historyUserQQ);
+                }
             } else if (msgObj.type === 'media') {
-                MediaCache.resolveServerMedia(msgObj.id, msgObj.dataUrl);
+                ServerMedia.resolve(msgObj.id, msgObj.dataUrl);
             } else if (msgObj.type === 'mediaMissing') {
-                MediaCache.resolveServerMedia(msgObj.id, null);
+                ServerMedia.resolve(msgObj.id, null);
             } else if (msgObj.type === 'historyCleared') {
-                MediaCache.resetServerMedia();
-                await MediaCache.clearCurrentScope();
+                ServerMedia.reset();
                 MessageManager.clearMessages();
-                Utils.showToast('历史记录已清空');
+                Utils.showToast('对话记录已清空');
             } else if (msgObj.type === 'typing') {
                 if (msgObj.active) {
                     MessageManager.showTypingIndicator();
@@ -1396,7 +917,7 @@ const WebSocketManager = {
                 }
             } else if (typeof msgObj.content === 'string' && msgObj.content.trim()) {
                 MessageManager.removeTypingIndicator();
-                await MessageManager.addMessage(msgObj.content.trim(), 'left', true);
+                MessageManager.addMessage(msgObj.content.trim(), 'left');
             }
         } catch (error) {
             console.error('[sf插件] 处理消息错误:', error);
@@ -1407,7 +928,8 @@ const WebSocketManager = {
 
     // 发送消息
     send(message, images = []) {
-        if (!AppState.wsConnected) {
+        const ws = AppState.wsConnection;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
             Utils.showToast('请先连接WebSocket服务器');
             return false;
         }
@@ -1672,18 +1194,22 @@ const EventBinder = {
         document.getElementById('upload-button')?.addEventListener('click', () => ImageManager.upload());
         
         document.getElementById('clear-button')?.addEventListener('click', async () => {
-            if (await Utils.showConfirm('确定要清空当前页面吗？')) {
-                const userQQ = document.getElementById('user-qq')?.value.trim() || 'web_user';
-                MediaCache.resetServerMedia();
-                await MediaCache.clearCurrentScope();
-                if (AppState.wsConnected && AppState.wsAuthenticated) {
-                    AppState.wsConnection.send(JSON.stringify({ type: 'clearHistory', userQQ }));
-                    Utils.showToast('正在清空历史记录...');
-                } else {
-                    MessageManager.clearMessages();
-                    Utils.showToast('页面已清空（未连接服务器）');
-                }
+            if (!await Utils.showConfirm('只清空当前页面显示？服务端对话记录会保留，重新连接即可恢复。')) return;
+            ServerMedia.reset();
+            MessageManager.clearMessages();
+            Utils.showToast('页面已清空，重新连接可恢复历史');
+        });
+
+        document.getElementById('clear-history-button')?.addEventListener('click', async () => {
+            if (!await Utils.showConfirm('确定要清空服务端的对话记录吗？此操作不可撤销。')) return;
+            const ws = AppState.wsConnection;
+            if (!ws || ws.readyState !== WebSocket.OPEN || !AppState.wsAuthenticated) {
+                Utils.showToast('请先连接服务器');
+                return;
             }
+            const userQQ = document.getElementById('user-qq')?.value.trim() || 'web_user';
+            ws.send(JSON.stringify({ type: 'clearHistory', userQQ }));
+            Utils.showToast('正在清空对话记录...');
         });
         
         // 头像开关
@@ -1709,7 +1235,7 @@ const EventBinder = {
     },
 
     // 处理发送
-    async handleSend() {
+    handleSend() {
         const message = DOM.messageInput?.value.trim() || '';
         const images = ImageManager.getAllImages();
         
@@ -1723,16 +1249,11 @@ const EventBinder = {
             });
         }
         
-        // 显示用户消息
-        await MessageManager.addMessage(displayContent, 'right', true, {
-            historyContent: MediaCache.buildOutgoingHistoryContent(message, images.length)
-        });
+        // 本地只做即时显示，持久化完全交给后端
+        MessageManager.addMessage(displayContent, 'right');
         
         // 发送到服务器
         if (WebSocketManager.send(message, images)) {
-            if (message === MediaCache.CLEAR_HISTORY_COMMAND) {
-                await MediaCache.clearCurrentScope();
-            }
             DOM.messageInput.value = '';
             Utils.autoResizeInput(DOM.messageInput);
             ImageManager.clearPreviews();
